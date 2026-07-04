@@ -11,6 +11,10 @@ struct ChatView: View {
     @State private var draft = ""
     @State private var zoneOnly = false
 
+    /// LoRa frames are tiny. Room messages carry encryption overhead, so
+    /// their budget is tighter than plain direct messages.
+    private var maxLength: Int { room != nil ? 120 : 140 }
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
@@ -54,6 +58,13 @@ struct ChatView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 4)
             }
+            if draft.count > maxLength - 20 {
+                Text("\(draft.count)/\(maxLength) — mesh radio messages are short")
+                    .font(.caption2)
+                    .foregroundStyle(draft.count > maxLength ? .red : .secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.horizontal, 4)
+            }
             HStack(spacing: 10) {
                 if room != nil {
                     Button {
@@ -67,6 +78,11 @@ struct ChatView: View {
                 TextField(placeholder, text: $draft, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...4)
+                    .onChange(of: draft) { _, newValue in
+                        if newValue.count > maxLength {
+                            draft = String(newValue.prefix(maxLength))
+                        }
+                    }
                 Button {
                     send()
                 } label: {

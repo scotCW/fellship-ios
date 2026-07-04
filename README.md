@@ -87,6 +87,22 @@ Design constraints inherited from the spec (and enforced in code):
 | Single GPS interval | `LocationService` owns the only timer; everything piggybacks |
 | iOS background reality | `BackgroundMonitor` uses SLC + rotated regions; copy never says "instant" |
 
+## Spec deviations & practical limits (honest notes)
+
+- **NASA imagery resolution** — the original spec hoped for ~10 m Sentinel-2 /
+  Landsat imagery via GIBS. GIBS's *global, reliable, keyless* layer is the
+  VIIRS daily true-color composite at roughly 250 m/pixel, so that's the
+  default; the UI says so plainly. (GIBS HLS layers are ~30 m but have sparse
+  daily swath coverage, which makes a terrible browsing layer.)
+- **Message length** — LoRa frames are tiny. Room messages are capped at 120
+  characters (the composer shows a counter), direct messages at 140. Encrypted
+  room traffic is hand-packed binary specifically to fit stock MeshCore text
+  frames; invite payloads are chunked across several frames.
+- **Channel slots** — stock companion firmware exposes a small number of
+  channel slots; Fellship maps rooms to slots 1–7 (slot 0, the public channel,
+  is never touched). With more than 7 rooms, the oldest room loses its slot
+  until it becomes active again.
+
 ## Hardware status
 
 The BLE layer implements the MeshCore companion protocol as documented by the
