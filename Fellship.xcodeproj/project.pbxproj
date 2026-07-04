@@ -20,6 +20,11 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXFileReference section */
+		FAA000012E0000010000000A /* Fellship.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fellship.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FAA000022E0000010000000A /* FellshipTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FellshipTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		FA4000012E0000010000000A /* Fellship */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
@@ -57,7 +62,17 @@
 			children = (
 				FA4000012E0000010000000A /* Fellship */,
 				FA4000022E0000010000000A /* FellshipTests */,
+				FA6000022E0000010000000A /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		FA6000022E0000010000000A /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				FAA000012E0000010000000A /* Fellship.app */,
+				FAA000022E0000010000000A /* FellshipTests.xctest */,
+			);
+			name = Products;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -141,7 +156,7 @@
 				FAC000012E0000010000000A /* XCRemoteSwiftPackageReference "maplibre-gl-native-distribution" */,
 			);
 			preferredProjectObjectVersion = 77;
-			productRefGroup = FA6000012E0000010000000A;
+			productRefGroup = FA6000022E0000010000000A /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (

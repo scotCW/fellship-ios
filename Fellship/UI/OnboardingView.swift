@@ -44,7 +44,7 @@ struct OnboardingView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .padding(.horizontal, 24)
-            .padding(.bottom, 40)
+            .padding(.bottom, 64)
         }
     }
 
@@ -69,7 +69,7 @@ struct OnboardingView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .padding(.bottom, 40)
+            .padding(.bottom, 64)
         }
         .padding(.horizontal, 28)
     }
@@ -124,7 +124,7 @@ struct OnboardingView: View {
                 .controlSize(.large)
             }
             .padding(.horizontal, 24)
-            .padding(.bottom, 40)
+            .padding(.bottom, 64)
         }
     }
 

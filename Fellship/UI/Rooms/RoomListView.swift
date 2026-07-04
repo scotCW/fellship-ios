@@ -5,9 +5,11 @@ struct RoomListView: View {
     @EnvironmentObject private var settings: AppSettings
     @State private var showCreate = false
     @State private var showJoinQR = false
+    @State private var path = NavigationPath()
+    @State private var didAutoOpen = false
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if engine.rooms.isEmpty && engine.invites.isEmpty {
                     EmptyStateView(systemImage: "person.3",
@@ -42,7 +44,23 @@ struct RoomListView: View {
             .sheet(isPresented: $showJoinQR) {
                 JoinViaQRSheet()
             }
+            .onChange(of: engine.rooms.count) {
+                autoOpenIfRequested()
+            }
+            .onAppear {
+                autoOpenIfRequested()
+            }
         }
+    }
+
+    /// Launch-arg driven deep link (`-launchRoomFirst YES`) used by UI
+    /// automation and screenshots.
+    private func autoOpenIfRequested() {
+        guard !didAutoOpen,
+              UserDefaults.standard.bool(forKey: "launchRoomFirst"),
+              let first = engine.rooms.first else { return }
+        didAutoOpen = true
+        path.append(first.id)
     }
 
     private var roomList: some View {

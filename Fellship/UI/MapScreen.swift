@@ -63,7 +63,14 @@ struct MapScreen: View {
                 }
             }
             .onAppear {
-                if !didInitialCenter {
+                if !didInitialCenter, location.lastFix != nil {
+                    didInitialCenter = true
+                    centerOnMe()
+                }
+            }
+            .onChange(of: location.lastFix != nil) { _, hasFix in
+                // First GPS fix after launch: bring the camera home once.
+                if hasFix && !didInitialCenter {
                     didInitialCenter = true
                     centerOnMe()
                 }

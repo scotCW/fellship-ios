@@ -10,6 +10,16 @@ final class RoomEngineTests: XCTestCase {
     var engine: RoomEngine!
 
     override func setUp() async throws {
+        // Room creation stores keys in the Keychain; without entitlements
+        // (e.g. an unsigned test host) that fails. Skip loudly rather than
+        // crash on force-unwraps downstream.
+        let probe = KeychainStore(service: "app.fellship.tests")
+        do {
+            try probe.save(Data([1]), for: "probe")
+            probe.delete("probe")
+        } catch {
+            throw XCTSkip("Keychain unavailable in this test host (build must be signed to run locally)")
+        }
         engine = RoomEngine(store: LocalStore.ephemeral(),
                             settings: AppSettings(defaults: UserDefaults(suiteName: "test-\(UUID())")!),
                             notifications: NotificationService())

@@ -119,7 +119,9 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
     private var tickTimer: DispatchSourceTimer?
     private var startTime = Date()
     private var lastChatAt = Date()
-    private var chatCursor = 0
+    // Random script offset so consecutive demo sessions don't repeat the
+    // same opening line.
+    private var chatCursor = Int.random(in: 0..<5)
     private var inviteSent = false
     private var peerInsideFlags: [String: Bool] = [:]
     private var queuedMessages: [Data] = [] // frames waiting behind msgWaiting
@@ -409,7 +411,10 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
         for peer in SimPeer.all {
             let position = peer.position(at: elapsed)
             let inside = GeoMath.contains(boundary, point: position)
-            let wasInside = peerInsideFlags[peer.name] ?? true
+            // First observation is the baseline, not a transition — otherwise
+            // every demo session opens with a phantom exit event.
+            let wasInside = peerInsideFlags[peer.name] ?? inside
+            peerInsideFlags[peer.name] = inside
 
             let presence = FellshipEnvelope.Presence(
                 memberID: peer.identityKeyHex,
@@ -423,7 +428,6 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
             }
 
             if inside != wasInside {
-                peerInsideFlags[peer.name] = inside
                 let event = FellshipEnvelope.ZoneEvent(memberID: peer.identityKeyHex,
                                                        didEnter: inside,
                                                        sentAt: Date())

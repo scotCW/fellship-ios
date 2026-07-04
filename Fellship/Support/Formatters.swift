@@ -9,7 +9,9 @@ enum Format {
 
     static func ago(_ date: Date) -> String {
         let seconds = Date().timeIntervalSince(date)
-        if seconds < 5 { return "just now" }
+        // Only a *recent past* moment is "just now" — future dates must
+        // format as "in 2 hr" etc.
+        if seconds >= 0 && seconds < 5 { return "just now" }
         return relative.localizedString(for: date, relativeTo: Date())
     }
 
