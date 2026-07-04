@@ -101,10 +101,13 @@ struct MapScreen: View {
                                     coordinate: fix.coordinate, kind: .me))
         }
         // One marker per member, from the freshest room presence that
-        // includes coordinates.
+        // includes coordinates. Stale positions don't belong on the map —
+        // a marker implies "this is where they are".
         var best: [String: (MemberPresence, String)] = [:]
         for room in engine.rooms {
-            for presence in engine.presenceList(for: room) where presence.coordinate != nil {
+            for presence in engine.presenceList(for: room)
+            where presence.coordinate != nil
+                && presence.isFresh(interval: settings.updateIntervalSeconds) {
                 if let existing = best[presence.memberID]?.0,
                    existing.lastHeard >= presence.lastHeard { continue }
                 best[presence.memberID] = (presence, room.id)
