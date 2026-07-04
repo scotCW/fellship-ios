@@ -60,9 +60,9 @@ final class RoomEngine: ObservableObject {
         let all = (try? store.invites()) ?? []
         var live: [Invite] = []
         for invite in all {
-            // Outgoing offers that never completed go stale after a week —
-            // drop them instead of resurfacing forever.
-            let stale = invite.isOutgoing && Date().timeIntervalSince(invite.createdAt) > 7 * 86_400
+            // Any invite that never completed goes stale after a week — drop
+            // it instead of resurfacing forever.
+            let stale = Date().timeIntervalSince(invite.createdAt) > 7 * 86_400
             if invite.state == .completed || invite.state == .declined || stale {
                 try? store.deleteInvite(invite.id)
             } else {

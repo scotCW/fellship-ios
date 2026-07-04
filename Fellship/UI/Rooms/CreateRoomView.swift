@@ -177,6 +177,12 @@ struct CreateRoomView: View {
 
     private var controls: some View {
         VStack(spacing: 12) {
+            if location.lastFix == nil {
+                Label("No GPS fix yet — pan the map to the area you want",
+                      systemImage: "location.slash")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
             Picker("Shape", selection: $tool) {
                 ForEach(BoundaryTool.allCases) { t in
                     Text(t.rawValue).tag(t)

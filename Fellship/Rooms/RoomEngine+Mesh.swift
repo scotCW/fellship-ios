@@ -514,11 +514,20 @@ extension RoomEngine {
         joinRoom(manifest: manifest)
     }
 
-    /// Tears down demo artifacts when demo mode is switched off.
+    /// Tears down demo artifacts when demo mode is switched off: demo rooms,
+    /// demo invites, and direct-message threads with the scripted peers.
     func removeDemoRooms() {
         for room in rooms where room.id == DemoWorld.roomID || room.id == DemoWorld.publicRoomID {
             deleteRoom(room)
         }
+        for invite in invites where invite.roomID == DemoWorld.publicRoomID {
+            try? store.deleteInvite(invite.id)
+        }
         invites.removeAll { $0.roomID == DemoWorld.publicRoomID }
+        for peer in SimPeer.all {
+            try? store.deleteThread(peer.radioPublicKey.hexEncoded)
+        }
+        nearbyContacts.removeAll()
+        chatRevision += 1
     }
 }

@@ -97,7 +97,9 @@ struct DemoBanner: View {
     }
 }
 
-/// GPS source indicator (spec §4: make the fallback explicit).
+/// GPS source indicator (spec §4: make the fallback explicit). When there is
+/// no source at all, says so instead of disappearing — a silent blank map
+/// helps nobody.
 struct GPSSourceBadge: View {
     @EnvironmentObject private var location: LocationService
 
@@ -106,6 +108,14 @@ struct GPSSourceBadge: View {
             Label(fix.source == .radio ? "Radio GPS" : "Phone GPS",
                   systemImage: fix.source == .radio ? "antenna.radiowaves.left.and.right" : "iphone")
                 .font(.caption2.weight(.medium))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.thinMaterial, in: Capsule())
+        } else {
+            Label("No position — connect a radio or allow location",
+                  systemImage: "location.slash")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.orange)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(.thinMaterial, in: Capsule())

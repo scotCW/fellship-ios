@@ -28,6 +28,7 @@ struct NearbyView: View {
                         Image(systemName: "arrow.clockwise")
                     }
                     .disabled(!app.transportState.isConnected)
+                    .accessibilityLabel("Refresh nearby radios")
                 }
             }
         }

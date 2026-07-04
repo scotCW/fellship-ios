@@ -36,6 +36,7 @@ struct RoomListView: View {
                     } label: {
                         Image(systemName: "plus")
                     }
+                    .accessibilityLabel("Create or join a room")
                 }
             }
             .sheet(isPresented: $showCreate) {
@@ -211,8 +212,15 @@ struct InviteAcceptSheet: View {
             .padding(.horizontal, 24)
 
             if liveInvite.state == .accepted {
-                ProgressView("Waiting for the room key over the mesh…")
-                    .padding(.top, 4)
+                VStack(spacing: 6) {
+                    ProgressView("Waiting for the room key over the mesh…")
+                    Text("This needs \(liveInvite.peerName)'s radio in range. You can close this — the room appears automatically once the key arrives.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                }
+                .padding(.top, 4)
             }
 
             HStack(spacing: 12) {

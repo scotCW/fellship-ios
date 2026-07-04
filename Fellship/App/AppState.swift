@@ -113,7 +113,12 @@ final class AppState: ObservableObject {
         } catch {
             connectionError = (error as? LocalizedError)?.errorDescription
                 ?? "Could not connect to the radio."
+            // Tear the link down fully — a transport left connected with a
+            // dead session would show a ghost radio in the dashboard.
+            let failedSession = session
             session = nil
+            Task { await failedSession?.stop() }
+            transport.disconnect()
         }
     }
 

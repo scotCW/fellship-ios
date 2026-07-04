@@ -124,6 +124,12 @@ final class LocalStore: @unchecked Sendable {
         }.reversed()
     }
 
+    /// Removes an entire message thread (used when demo artifacts are
+    /// cleaned up; room threads go through deleteRoom instead).
+    func deleteThread(_ threadID: String) throws {
+        try db.exec("DELETE FROM messages WHERE thread_id=?;", [.text(threadID)])
+    }
+
     /// Thread IDs that have at least one direct message, most recent first.
     func directThreadIDs() throws -> [String] {
         try db.query("""

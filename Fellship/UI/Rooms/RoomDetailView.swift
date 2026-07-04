@@ -57,6 +57,7 @@ struct RoomDetailView: View {
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
+                .accessibilityLabel("Room actions")
             }
         }
         .sheet(isPresented: $showSettings) {
@@ -79,8 +80,11 @@ struct RoomDetailView: View {
                 StatusChip(text: room.access.displayName,
                            color: room.access == .publicRoom ? .orange : .blue)
                 if room.kind == .geofenced {
-                    StatusChip(text: engine.myInside[room.id] == true ? "You're inside" : "You're outside",
-                               color: engine.myInside[room.id] == true ? .teal : .secondary)
+                    switch engine.myInside[room.id] {
+                    case .some(true): StatusChip(text: "You're inside", color: .teal)
+                    case .some(false): StatusChip(text: "You're outside", color: .secondary)
+                    case .none: StatusChip(text: "Waiting for GPS", color: .orange)
+                    }
                 }
                 Spacer()
             }

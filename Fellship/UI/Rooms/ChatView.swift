@@ -90,6 +90,7 @@ struct ChatView: View {
                         .font(.title2)
                 }
                 .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                .accessibilityLabel("Send message")
             }
         }
         .padding(.horizontal, 12)
