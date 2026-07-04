@@ -29,7 +29,12 @@ final class BLETransport: NSObject, MeshTransport, @unchecked Sendable {
     override init() {
         super.init()
         central = CBCentralManager(delegate: self, queue: queue,
-                                   options: [CBCentralManagerOptionShowPowerAlertKey: true])
+                                   options: [
+                                       CBCentralManagerOptionShowPowerAlertKey: true,
+                                       // Lets iOS relaunch/reconnect us for
+                                       // background BLE events.
+                                       CBCentralManagerOptionRestoreIdentifierKey: "app.fellship.central",
+                                   ])
         stateCaster.yield(.disconnected)
     }
 
@@ -154,6 +159,18 @@ final class BLETransport: NSObject, MeshTransport, @unchecked Sendable {
 }
 
 extension BLETransport: CBCentralManagerDelegate {
+    func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        // iOS relaunched us for a BLE event. Re-adopt any still-connected
+        // peripheral so the session can resume.
+        if let restored = (dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral])?.first {
+            peripheral = restored
+            restored.delegate = self
+            if restored.state == .connected {
+                restored.discoverServices([CBUUID(string: MeshCore.serviceUUID)])
+            }
+        }
+    }
+
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         if central.state == .poweredOn, shouldScanWhenPoweredOn {
             shouldScanWhenPoweredOn = false

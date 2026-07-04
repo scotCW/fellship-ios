@@ -25,6 +25,10 @@ final class AppState: ObservableObject {
     private var streamTasks: [Task<Void, Never>] = []
     private var sessionEventTask: Task<Void, Never>?
     private var batteryTimer: Timer?
+    /// Set while the user is deliberately disconnecting, so the drop isn't
+    /// treated as a link failure to recover from.
+    private var userInitiatedDisconnect = false
+    private var reconnectTask: Task<Void, Never>?
 
     init() {
         settings = AppSettings()
@@ -85,6 +89,7 @@ final class AppState: ObservableObject {
     func connect(to radio: DiscoveredRadio) async {
         ensureTransport()
         guard let transport else { return }
+        userInitiatedDisconnect = false
         connectionError = nil
         do {
             try await transport.connect(to: radio.id)
@@ -129,7 +134,29 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Reconnects with backoff after an unexpected link drop.
+    private func scheduleReconnect() {
+        guard reconnectTask == nil else { return }
+        guard let targetID = settings.demoMode ? "demo-radio" : settings.lastRadioIdentifier else { return }
+        reconnectTask = Task { [weak self] in
+            defer { Task { @MainActor [weak self] in self?.reconnectTask = nil } }
+            for attempt in 0..<6 {
+                let delay = UInt64(min(60, 5 * (1 << attempt))) * 1_000_000_000
+                try? await Task.sleep(nanoseconds: delay)
+                guard let self, !Task.isCancelled else { return }
+                if self.transportState.isConnected || self.userInitiatedDisconnect { return }
+                await self.connect(to: DiscoveredRadio(id: targetID, name: "Saved radio", rssi: 0))
+                if self.transportState.isConnected { return }
+            }
+        }
+    }
+
     func disconnect() {
+        // Stays set until the next explicit connect — the disconnected state
+        // event arrives asynchronously, after this method returns.
+        userInitiatedDisconnect = true
+        reconnectTask?.cancel()
+        reconnectTask = nil
         let closing = session
         Task { await closing?.stop() }
         sessionEventTask?.cancel()
@@ -162,10 +189,16 @@ final class AppState: ObservableObject {
         streamTasks.append(Task { [weak self] in
             for await state in newTransport.states() {
                 guard let self else { return }
+                let wasConnected = self.transportState.isConnected
                 self.transportState = state
                 self.location.setRadioConnected(state.isConnected)
                 if !state.isConnected {
                     self.selfInfo = nil
+                }
+                // Radios drop out on the trail all the time — get back on the
+                // mesh without the user having to notice.
+                if wasConnected, !state.isConnected, !self.userInitiatedDisconnect {
+                    self.scheduleReconnect()
                 }
             }
         })
