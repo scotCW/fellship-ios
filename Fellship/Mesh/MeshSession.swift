@@ -305,7 +305,15 @@ actor MeshSession {
             guard let event = events.first else { break }
             switch event {
             case .contactMessage(let message):
-                emit(.contactMessage(message, sender: contactMatching(prefix: message.senderPublicKeyPrefix)))
+                var sender = contactMatching(prefix: message.senderPublicKeyPrefix)
+                if sender == nil {
+                    // Cold contacts cache (fresh connect) — one refresh so the
+                    // sender resolves; safe here because the drain runs off
+                    // the frame pump.
+                    _ = try? await getContacts()
+                    sender = contactMatching(prefix: message.senderPublicKeyPrefix)
+                }
+                emit(.contactMessage(message, sender: sender))
             case .channelMessage(let message):
                 emit(.channelMessage(message))
             case .noMoreMessages:

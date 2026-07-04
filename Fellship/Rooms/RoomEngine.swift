@@ -54,7 +54,19 @@ final class RoomEngine: ObservableObject {
 
     private func loadFromStore() {
         rooms = (try? store.rooms()) ?? []
-        invites = ((try? store.invites()) ?? []).filter { $0.state != .completed && $0.state != .declined }
+        let all = (try? store.invites()) ?? []
+        var live: [Invite] = []
+        for invite in all {
+            // Outgoing offers that never completed go stale after a week —
+            // drop them instead of resurfacing forever.
+            let stale = invite.isOutgoing && Date().timeIntervalSince(invite.createdAt) > 7 * 86_400
+            if invite.state == .completed || invite.state == .declined || stale {
+                try? store.deleteInvite(invite.id)
+            } else {
+                live.append(invite)
+            }
+        }
+        invites = live
         for room in rooms {
             membersCache[room.id] = (try? store.members(roomID: room.id)) ?? []
         }
@@ -161,10 +173,11 @@ final class RoomEngine: ObservableObject {
 
     /// A room is active iff at least one member's device currently reports
     /// being inside the boundary (geofenced) or reachable (range-based).
-    /// My own device counts.
+    /// My own device counts — for range-based rooms, being on the mesh at
+    /// all makes me the room's reach, which is also what lets a brand-new
+    /// public range room bootstrap its second member via auto-invite.
     func isActive(_ room: Room) -> Bool {
-        if myInside[room.id] == true { return true }
-        return activeMemberCount(room) > 0
+        activeMemberCount(room) > 0
     }
 
     /// Members currently inside/in-range, judged by fresh presence.
@@ -173,7 +186,11 @@ final class RoomEngine: ObservableObject {
         let fresh = (presence[room.id] ?? [:]).values.filter {
             $0.isFresh(interval: interval) && $0.isInside
         }
-        let mine = myInside[room.id] == true ? 1 : 0
+        let mine: Int
+        switch room.kind {
+        case .geofenced: mine = myInside[room.id] == true ? 1 : 0
+        case .rangeBased: mine = session != nil ? 1 : 0
+        }
         return fresh.count + mine
     }
 

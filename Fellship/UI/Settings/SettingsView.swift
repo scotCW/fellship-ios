@@ -11,7 +11,8 @@ struct SettingsView: View {
 
     @State private var showCustomDisclaimer = false
     @State private var showDonation = false
-    @State private var pendingCustomTemplate = ""
+    @State private var customDraft = ""
+    @State private var customDraftLoaded = false
 
     var body: some View {
         NavigationStack {
@@ -29,11 +30,9 @@ struct SettingsView: View {
             .alert("Using your own map provider", isPresented: $showCustomDisclaimer) {
                 Button("I understand") {
                     settings.customAPIDisclaimerShown = true
-                    settings.customTileTemplate = pendingCustomTemplate
+                    settings.customTileTemplate = customDraft
                 }
-                Button("Cancel", role: .cancel) {
-                    pendingCustomTemplate = ""
-                }
+                Button("Cancel", role: .cancel) {}
             } message: {
                 Text(MapDisclaimers.customFull)
             }
@@ -146,16 +145,29 @@ struct SettingsView: View {
             if settings.tileSource == .custom {
                 VStack(alignment: .leading, spacing: 6) {
                     TextField("Tile URL template with {z}/{x}/{y} and your key",
-                              text: customTemplateBinding, axis: .vertical)
+                              text: $customDraft, axis: .vertical)
                         .font(.caption.monospaced())
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                         .lineLimit(2...4)
-                    if !settings.customTileTemplate.isEmpty
-                        && !TileSourceResolver.isValidTemplate(settings.customTileTemplate) {
-                        Text("Template needs {z}, {x} and {y} placeholders — falling back to OpenStreetMap until it does.")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
+                        .onAppear {
+                            if !customDraftLoaded {
+                                customDraftLoaded = true
+                                customDraft = settings.customTileTemplate
+                            }
+                        }
+                    if customDraft != settings.customTileTemplate {
+                        HStack {
+                            Button("Save template") { commitCustomTemplate() }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                .disabled(!customDraft.isEmpty && !TileSourceResolver.isValidTemplate(customDraft))
+                            if !customDraft.isEmpty && !TileSourceResolver.isValidTemplate(customDraft) {
+                                Text("Needs {z}, {x} and {y} placeholders")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
                     }
                     // Persistent short disclaimer (spec §7.1).
                     Text(MapDisclaimers.customShort)
@@ -173,18 +185,14 @@ struct SettingsView: View {
         }
     }
 
-    private var customTemplateBinding: Binding<String> {
-        Binding(get: { settings.customTileTemplate.isEmpty ? pendingCustomTemplate : settings.customTileTemplate },
-                set: { newValue in
-                    if settings.customAPIDisclaimerShown || newValue.isEmpty {
-                        settings.customTileTemplate = newValue
-                    } else {
-                        // First entry of a key: show the full disclaimer once
-                        // before storing anything (spec §7.1).
-                        pendingCustomTemplate = newValue
-                        showCustomDisclaimer = true
-                    }
-                })
+    private func commitCustomTemplate() {
+        if settings.customAPIDisclaimerShown || customDraft.isEmpty {
+            settings.customTileTemplate = customDraft
+        } else {
+            // First entry of a key: show the full disclaimer once before
+            // storing anything (spec §7.1).
+            showCustomDisclaimer = true
+        }
     }
 
     // MARK: Notifications
