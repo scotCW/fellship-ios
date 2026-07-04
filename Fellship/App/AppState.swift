@@ -1,0 +1,197 @@
+import Foundation
+import SwiftUI
+
+/// Composition root. Owns every service, wires them together, and manages the
+/// radio connection lifecycle (real BLE or the demo simulator).
+@MainActor
+final class AppState: ObservableObject {
+    let settings: AppSettings
+    let store: LocalStore
+    let notifications: NotificationService
+    let engine: RoomEngine
+    let location: LocationService
+    let background: BackgroundMonitor
+    let offlineMaps: OfflineMapManager
+
+    @Published private(set) var transportState: TransportState = .disconnected
+    @Published private(set) var radios: [DiscoveredRadio] = []
+    @Published private(set) var selfInfo: MeshCore.SelfInfo?
+    @Published private(set) var deviceInfo: MeshCore.DeviceInfo?
+    @Published private(set) var batteryMilliVolts: UInt16?
+    @Published var connectionError: String?
+
+    private var transport: MeshTransport?
+    private(set) var session: MeshSession?
+    private var streamTasks: [Task<Void, Never>] = []
+    private var batteryTimer: Timer?
+
+    init() {
+        settings = AppSettings()
+        // A database failure at startup is unrecoverable; fall back to an
+        // ephemeral store so the app can at least run and explain itself.
+        store = (try? LocalStore()) ?? LocalStore.ephemeral()
+        notifications = NotificationService()
+        engine = RoomEngine(store: store, settings: settings, notifications: notifications)
+        location = LocationService()
+        background = BackgroundMonitor()
+        offlineMaps = OfflineMapManager()
+
+        wireServices()
+
+        if settings.demoMode {
+            Task { await enableDemoMode() }
+        } else if settings.lastRadioIdentifier != nil {
+            // Try to quietly resume the last radio.
+            Task { await reconnectLastRadio() }
+        }
+    }
+
+    private func wireServices() {
+        location.onTick = { [weak self] fix in
+            guard let self else { return }
+            await self.engine.handleTick(fix: fix)
+            self.background.syncRegions(rooms: self.engine.rooms,
+                                        currentPosition: fix?.coordinate ?? self.location.lastFix?.coordinate)
+        }
+        background.onWake = { [weak self] in
+            await self?.location.forceTick()
+        }
+        notifications.refreshAuthorizationState()
+        location.start(intervalSeconds: settings.updateIntervalSeconds)
+        background.start()
+    }
+
+    func updateIntervalChanged() {
+        location.updateInterval(settings.updateIntervalSeconds)
+    }
+
+    // MARK: - Radio connection
+
+    var mapStyle: (style: URL, attribution: String) {
+        TileSourceResolver.resolve(kind: settings.tileSource,
+                                   customTemplate: settings.customTileTemplate)
+    }
+
+    func startScanning() {
+        ensureTransport()
+        transport?.startScanning()
+    }
+
+    func stopScanning() {
+        transport?.stopScanning()
+    }
+
+    func connect(to radio: DiscoveredRadio) async {
+        ensureTransport()
+        guard let transport else { return }
+        connectionError = nil
+        do {
+            try await transport.connect(to: radio.id)
+            let session = MeshSession(transport: transport)
+            self.session = session
+            await session.start()
+            let info = try await session.appStart()
+            selfInfo = info
+            engine.attach(session: session)
+            location.attach(session: session)
+            location.setRadioConnected(true)
+            settings.lastRadioIdentifier = settings.demoMode ? nil : radio.id
+            deviceInfo = try? await session.queryDevice()
+            batteryMilliVolts = try? await session.readBattery()
+            startBatteryPolling()
+            if settings.demoMode {
+                engine.seedDemoRoomIfNeeded()
+            }
+            await location.forceTick()
+        } catch {
+            connectionError = (error as? LocalizedError)?.errorDescription
+                ?? "Could not connect to the radio."
+            session = nil
+        }
+    }
+
+    func disconnect() {
+        Task { await session?.stop() }
+        session = nil
+        transport?.disconnect()
+        engine.detachSession()
+        location.attach(session: nil)
+        location.setRadioConnected(false)
+        selfInfo = nil
+        deviceInfo = nil
+        batteryMilliVolts = nil
+        batteryTimer?.invalidate()
+        batteryTimer = nil
+        settings.lastRadioIdentifier = nil
+    }
+
+    private func ensureTransport() {
+        if transport == nil {
+            installTransport(settings.demoMode ? SimulatedTransport() : BLETransport())
+        }
+    }
+
+    private func installTransport(_ newTransport: MeshTransport) {
+        streamTasks.forEach { $0.cancel() }
+        streamTasks.removeAll()
+        transport?.disconnect()
+        transport = newTransport
+
+        streamTasks.append(Task { [weak self] in
+            for await state in newTransport.stateUpdates {
+                guard let self else { return }
+                self.transportState = state
+                self.location.setRadioConnected(state.isConnected)
+                if !state.isConnected {
+                    self.selfInfo = nil
+                }
+            }
+        })
+        streamTasks.append(Task { [weak self] in
+            for await list in newTransport.discoveredRadios {
+                self?.radios = list
+            }
+        })
+    }
+
+    private func reconnectLastRadio() async {
+        guard let id = settings.lastRadioIdentifier else { return }
+        ensureTransport()
+        // Give Bluetooth a moment to power on, then try a direct connect.
+        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        await connect(to: DiscoveredRadio(id: id, name: "Saved radio", rssi: 0))
+    }
+
+    private func startBatteryPolling() {
+        batteryTimer?.invalidate()
+        let t = Timer(timeInterval: 300, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let session = self.session else { return }
+                self.batteryMilliVolts = try? await session.readBattery()
+            }
+        }
+        t.tolerance = 30
+        RunLoop.main.add(t, forMode: .common)
+        batteryTimer = t
+    }
+
+    // MARK: - Demo mode
+
+    func enableDemoMode() async {
+        settings.demoMode = true
+        disconnect()
+        installTransport(SimulatedTransport())
+        transport?.startScanning()
+        try? await Task.sleep(nanoseconds: 900_000_000)
+        if let radio = radios.first {
+            await connect(to: radio)
+        }
+    }
+
+    func disableDemoMode() {
+        settings.demoMode = false
+        disconnect()
+        engine.removeDemoRooms()
+        installTransport(BLETransport())
+    }
+}

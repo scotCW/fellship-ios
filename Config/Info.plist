@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Fellship connects to your MeshCore radio over Bluetooth to send and receive mesh messages and to read the radio&#8217;s GPS position.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Your location is used to show your position on the map and to detect when you enter or leave a room&#8217;s boundary. It is shared only with rooms you join, and only when that room&#8217;s location sharing is turned on. It never goes to any server.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Background access lets Fellship notice zone entries and exits shortly after they happen, even when the app is not open. Location is never sent to any server.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>The camera is used only to scan invite QR codes from nearby members.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+		<string>location</string>
+	</array>
+</dict>
+</plist>
