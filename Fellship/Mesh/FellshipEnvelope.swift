@@ -51,12 +51,16 @@ enum FellshipEnvelope {
         var sentAt: Date
     }
 
+    /// One chat frame. Messages longer than a LoRa frame travel as several
+    /// parts sharing a message ID; receivers reassemble before display.
     struct Chat: Equatable {
-        var messageID: String   // 8 random bytes, hex
+        var messageID: String   // 6 random bytes, hex (shared by all parts)
         var memberID: String
         var zoneScoped: Bool
         var text: String
         var sentAt: Date
+        var part: UInt8 = 0
+        var partCount: UInt8 = 1
     }
 
     /// "I crossed the boundary" — every device evaluates its own GPS against
@@ -144,9 +148,14 @@ enum FellshipEnvelope {
         case .chat(let c):
             w.writeUInt8(PayloadType.chat.rawValue)
             w.writeUInt8(c.zoneScoped ? 1 : 0)
-            w.writeBytes((Data(hexEncoded: c.messageID) ?? Data(count: 8)).prefix(8))
-            w.writeBytes(wirePrefix(ofMemberID: c.memberID))
+            // 6-byte IDs keep a 60-char message inside one LoRa frame.
+            var msgID = Data(hexEncoded: c.messageID) ?? Data(count: 6)
+            if msgID.count < 6 { msgID.append(Data(count: 6 - msgID.count)) }
+            w.writeBytes(msgID.prefix(6))
+            w.writeBytes(wirePrefix(ofMemberID: c.memberID).prefix(6))
             w.writeUInt32(UInt32(clamping: Int(c.sentAt.timeIntervalSince1970)))
+            w.writeUInt8(c.part)
+            w.writeUInt8(max(1, c.partCount))
             w.writeString(c.text)
         case .zoneEvent(let e):
             w.writeUInt8(PayloadType.zoneEvent.rawValue)
@@ -186,12 +195,15 @@ enum FellshipEnvelope {
                                       coordinate: coordinate, sentAt: ts))
         case .chat:
             let flags = try r.readUInt8()
-            let messageID = try r.readBytes(8).hexEncoded
-            let member = try r.readBytes(8).hexEncoded
+            let messageID = try r.readBytes(6).hexEncoded
+            let member = try r.readBytes(6).hexEncoded
             let ts = Date(timeIntervalSince1970: TimeInterval(try r.readUInt32()))
+            let part = try r.readUInt8()
+            let partCount = try r.readUInt8()
             let text = r.readStringToEnd()
             return .chat(Chat(messageID: messageID, memberID: member,
-                              zoneScoped: flags & 1 != 0, text: text, sentAt: ts))
+                              zoneScoped: flags & 1 != 0, text: text, sentAt: ts,
+                              part: part, partCount: max(1, partCount)))
         case .zoneEvent:
             let flags = try r.readUInt8()
             let member = try r.readBytes(8).hexEncoded

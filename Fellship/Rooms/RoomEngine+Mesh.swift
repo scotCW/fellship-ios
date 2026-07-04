@@ -115,6 +115,27 @@ extension RoomEngine {
             guard amPresent else { return }
         }
         guard !seenMessageIDs.contains(chat.messageID) else { return }
+
+        var chat = chat
+        if chat.partCount > 1 {
+            // Buffer parts until the set completes; stale partials expire.
+            let cutoff = Date().addingTimeInterval(-300)
+            for (id, started) in chatPartsStarted where started < cutoff {
+                chatParts[id] = nil
+                chatPartsStarted[id] = nil
+            }
+            var parts = chatParts[chat.messageID] ?? [:]
+            if parts.isEmpty { chatPartsStarted[chat.messageID] = Date() }
+            parts[chat.part] = chat.text
+            guard parts.count == Int(chat.partCount) else {
+                chatParts[chat.messageID] = parts
+                return
+            }
+            chatParts[chat.messageID] = nil
+            chatPartsStarted[chat.messageID] = nil
+            chat.text = (0..<chat.partCount).compactMap { parts[$0] }.joined()
+        }
+
         seenMessageIDs.insert(chat.messageID)
         let senderID = resolveMemberID(chat.memberID, roomID: room.id)
         let senderName = displayName(forMemberID: senderID, roomID: room.id)

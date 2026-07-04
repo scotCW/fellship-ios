@@ -120,18 +120,21 @@ final class CryptoAndEnvelopeTests: XCTestCase {
 
     func testChatAndZoneEventRoundTrip() throws {
         let key = CryptoService.generateRoomKey()
-        let chat = FellshipEnvelope.Chat(messageID: "0102030405060708",
+        let chat = FellshipEnvelope.Chat(messageID: "010203040506",
                                          memberID: memberID,
                                          zoneScoped: true,
                                          text: "Meet at the col",
-                                         sentAt: Date())
+                                         sentAt: Date(),
+                                         part: 1, partCount: 3)
         let chatText = try FellshipEnvelope.sealRoomPayload(.chat(chat), roomID: roomID, roomKey: key)
         guard case .chat(let decodedChat) = try FellshipEnvelope.openRoomPayload(chatText, roomID: roomID, roomKey: key) else {
             return XCTFail("expected chat")
         }
-        XCTAssertEqual(decodedChat.messageID, "0102030405060708")
+        XCTAssertEqual(decodedChat.messageID, "010203040506")
         XCTAssertTrue(decodedChat.zoneScoped)
         XCTAssertEqual(decodedChat.text, "Meet at the col")
+        XCTAssertEqual(decodedChat.part, 1)
+        XCTAssertEqual(decodedChat.partCount, 3)
 
         let event = FellshipEnvelope.ZoneEvent(memberID: memberID, didEnter: true, sentAt: Date())
         let eventText = try FellshipEnvelope.sealRoomPayload(.zoneEvent(event), roomID: roomID, roomKey: key)
@@ -174,13 +177,22 @@ final class CryptoAndEnvelopeTests: XCTestCase {
             roomID: roomID, roomKey: key)
         XCTAssertLessThanOrEqual(zoneText.utf8.count, 100)
 
-        let chat60 = FellshipEnvelope.Chat(messageID: "0102030405060708", memberID: memberID,
+        let chat60 = FellshipEnvelope.Chat(messageID: "010203040506", memberID: memberID,
                                            zoneScoped: false,
                                            text: String(repeating: "x", count: 60),
                                            sentAt: Date())
         let chatText = try FellshipEnvelope.sealRoomPayload(.chat(chat60), roomID: roomID, roomKey: key)
         XCTAssertLessThanOrEqual(chatText.utf8.count, 160,
                                  "a 60-char chat message must fit one LoRa text frame")
+
+        // The engine splits at 48 chars/part — every part must fit with room
+        // to spare.
+        let part48 = FellshipEnvelope.Chat(messageID: "010203040506", memberID: memberID,
+                                           zoneScoped: true,
+                                           text: String(repeating: "w", count: 48),
+                                           sentAt: Date(), part: 2, partCount: 3)
+        let partText = try FellshipEnvelope.sealRoomPayload(.chat(part48), roomID: roomID, roomKey: key)
+        XCTAssertLessThanOrEqual(partText.utf8.count, 150)
 
         // Every direct chunk must fit too.
         let delivery = FellshipEnvelope.RoomKeyDelivery(inviteID: UUID().uuidString,
@@ -272,7 +284,13 @@ final class CryptoAndEnvelopeTests: XCTestCase {
             roomKeyData: keyData)
         let encoded = try FellshipEnvelope.encodeManifest(manifest)
         let decoded = try FellshipEnvelope.decodeManifest(encoded)
-        XCTAssertEqual(decoded.room, room)
+        // Field-wise comparison: Date sub-second precision doesn't survive
+        // JSON, and nothing in the app relies on it.
+        XCTAssertEqual(decoded.room.id, room.id)
+        XCTAssertEqual(decoded.room.name, room.name)
+        XCTAssertEqual(decoded.room.boundary, room.boundary)
+        XCTAssertEqual(decoded.room.access, room.access)
+        XCTAssertEqual(decoded.room.sharesPreciseLocation, room.sharesPreciseLocation)
         XCTAssertEqual(decoded.roomKeyData, keyData)
         XCTAssertEqual(decoded.members.count, 1)
     }

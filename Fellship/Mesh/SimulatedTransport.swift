@@ -441,7 +441,7 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
             let (peerIndex, line) = chatLines[chatCursor % chatLines.count]
             chatCursor += 1
             let peer = SimPeer.all[peerIndex]
-            let chat = FellshipEnvelope.Chat(messageID: Data((0..<8).map { _ in UInt8.random(in: 0...255) }).hexEncoded,
+            let chat = FellshipEnvelope.Chat(messageID: Data((0..<6).map { _ in UInt8.random(in: 0...255) }).hexEncoded,
                                              memberID: peer.identityKeyHex,
                                              zoneScoped: false,
                                              text: line,

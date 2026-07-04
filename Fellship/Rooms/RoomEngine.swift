@@ -38,6 +38,9 @@ final class RoomEngine: ObservableObject {
     private var eventTask: Task<Void, Never>?
     private var sweepTimer: Timer?
     var seenMessageIDs = Set<String>()
+    /// In-flight multi-part chats: messageID → (part index → text).
+    var chatParts: [String: [UInt8: String]] = [:]
+    var chatPartsStarted: [String: Date] = [:]
 
     var myIdentityHex: String { CryptoService.identityPublicKeyHex() }
     var myDisplayName: String {
@@ -400,11 +403,15 @@ final class RoomEngine: ObservableObject {
 
     // MARK: - Messaging (spec §5)
 
+    /// Text per chat part, chosen so every sealed frame stays well inside a
+    /// stock MeshCore text payload.
+    static let chatPartLength = 48
+
     func sendRoomMessage(_ room: Room, text: String, zoneOnly: Bool) async {
-        // 8 random bytes, hex — this exact ID travels on the wire so all
-        // members dedupe consistently.
-        var idBytes = Data(count: 8)
-        _ = idBytes.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 8, $0.baseAddress!) }
+        // 6 random bytes, hex — this exact ID travels on the wire so all
+        // members dedupe (and reassemble parts) consistently.
+        var idBytes = Data(count: 6)
+        _ = idBytes.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 6, $0.baseAddress!) }
         let messageID = idBytes.hexEncoded
         var message = RoomMessage(id: messageID,
                                   threadID: room.id,
@@ -423,21 +430,40 @@ final class RoomEngine: ObservableObject {
         guard let session,
               let key = CryptoService.roomKey(for: room.id),
               let slot = channelSlots[room.id] else { return }
-        let chat = FellshipEnvelope.Chat(messageID: messageID,
-                                         memberID: myIdentityHex,
-                                         zoneScoped: zoneOnly,
-                                         text: text,
-                                         sentAt: Date())
-        guard let sealed = try? FellshipEnvelope.sealRoomPayload(.chat(chat),
-                                                                 roomID: room.id, roomKey: key) else { return }
-        do {
-            let result = try await session.sendChannelText(sealed, channelIndex: slot)
-            message.delivery = .sent
-            if let result, result.expectedAckCRC != 0 {
-                pendingAcks[result.expectedAckCRC] = messageID
+
+        // Split long texts across LoRa-sized parts sharing the message ID.
+        let characters = Array(text)
+        let parts: [String] = stride(from: 0, to: max(1, characters.count), by: Self.chatPartLength).map {
+            String(characters[$0..<min($0 + Self.chatPartLength, characters.count)])
+        }
+        let partCount = UInt8(clamping: parts.count)
+
+        var allSent = true
+        var lastAck: UInt32?
+        for (index, partText) in parts.enumerated() {
+            let chat = FellshipEnvelope.Chat(messageID: messageID,
+                                             memberID: myIdentityHex,
+                                             zoneScoped: zoneOnly,
+                                             text: partText,
+                                             sentAt: message.sentAt,
+                                             part: UInt8(index),
+                                             partCount: partCount)
+            guard let sealed = try? FellshipEnvelope.sealRoomPayload(.chat(chat),
+                                                                     roomID: room.id, roomKey: key) else {
+                allSent = false
+                break
             }
-        } catch {
-            message.delivery = .timedOut
+            do {
+                let result = try await session.sendChannelText(sealed, channelIndex: slot)
+                if let result, result.expectedAckCRC != 0 { lastAck = result.expectedAckCRC }
+            } catch {
+                allSent = false
+                break
+            }
+        }
+        message.delivery = allSent ? .sent : .timedOut
+        if allSent, let lastAck {
+            pendingAcks[lastAck] = messageID
         }
     }
 
