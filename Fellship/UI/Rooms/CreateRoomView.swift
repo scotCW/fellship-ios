@@ -251,10 +251,18 @@ struct CreateRoomView: View {
     }
 
     private func create() {
-        let boundary: Boundary?
+        var boundary: Boundary?
         if kind == .geofenced {
             guard let draft = draftBoundary else { return }
             boundary = draft
+            // A finger trace can produce hundreds of vertices; decimate so the
+            // boundary stays cheap to check and small enough to share (the QR
+            // invite embeds the full geometry).
+            if case .polygon(let vertices) = draft, vertices.count > 64 {
+                let step = Double(vertices.count) / 64.0
+                let sampled = (0..<64).map { vertices[Int(Double($0) * step)] }
+                boundary = .polygon(vertices: sampled)
+            }
         } else {
             boundary = nil
         }

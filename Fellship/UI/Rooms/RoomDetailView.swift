@@ -309,7 +309,7 @@ struct QRShareSheet: View {
                 } else {
                     EmptyStateView(systemImage: "qrcode",
                                    title: "QR unavailable",
-                                   message: "The room key could not be read from the Keychain.")
+                                   message: "This room couldn't be encoded as a QR code. Invite members over the mesh instead.")
                 }
                 Spacer()
             }

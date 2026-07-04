@@ -40,6 +40,11 @@ final class OfflineMapManager: NSObject, ObservableObject {
 
     func reload() {
         let packs = MLNOfflineStorage.shared.packs ?? []
+        for pack in packs where pack.state != .complete {
+            // Packs restored at launch stay silent until asked; without this
+            // an in-flight download shows 0% forever after a relaunch.
+            pack.requestProgress()
+        }
         regions = packs.map(Self.describe)
     }
 

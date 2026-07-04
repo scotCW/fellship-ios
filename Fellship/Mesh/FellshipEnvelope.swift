@@ -337,6 +337,12 @@ enum FellshipEnvelope {
             let data = Data(raw.dropFirst(6))
 
             sweep()
+            // Hard cap so a chunk flood can't grow memory; oldest partials
+            // are least likely to ever complete.
+            if partials.count >= 32,
+               let oldest = partials.min(by: { $0.value.startedAt < $1.value.startedAt }) {
+                partials[oldest.key] = nil
+            }
             let key = "\(senderHex)|\(msgID)"
             var partial = partials[key] ?? Partial(count: count)
             guard partial.count == count else {

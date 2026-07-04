@@ -261,8 +261,6 @@ final class RoomEngine: ObservableObject {
         }
     }
 
-    var isConnected: Bool { session != nil }
-
     // MARK: - Session attachment
 
     func attach(session: MeshSession) {

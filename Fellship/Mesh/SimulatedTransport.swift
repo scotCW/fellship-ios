@@ -161,6 +161,10 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
         queue.sync { [self] in
             connected = true
             startTime = Date()
+            // Fresh session: don't replay frames queued before a disconnect,
+            // and re-baseline zone flags so no phantom transitions fire.
+            queuedMessages.removeAll()
+            peerInsideFlags.removeAll()
             stateCaster.yield(.connected(deviceName: "Demo Radio (T-Beam)"))
             startTicking()
         }
@@ -396,6 +400,7 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
     // MARK: - Scripted world
 
     private func startTicking() {
+        tickTimer?.cancel() // never stack timers across reconnects
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + 2, repeating: 6)
         timer.setEventHandler { [weak self] in self?.tick() }

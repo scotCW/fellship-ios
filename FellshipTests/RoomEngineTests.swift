@@ -125,6 +125,36 @@ final class RoomEngineTests: XCTestCase {
         XCTAssertEqual(engine.messages(threadID: room.id).filter { !$0.isSystemEvent }.count, 1)
     }
 
+    func testMultiPartChatReassemblesOutOfOrder() throws {
+        let room = makeGeofencedRoom()
+        let key = try XCTUnwrap(CryptoService.roomKey(for: room.id))
+        let sender = String(repeating: "ab", count: 32)
+        let sentAt = Date()
+        let parts = ["The quick brown fox ", "jumps over ", "the lazy dog."]
+        var texts: [String] = []
+        for (index, part) in parts.enumerated() {
+            let chat = FellshipEnvelope.Chat(messageID: "aabbccddeeff",
+                                             memberID: sender, zoneScoped: false,
+                                             text: part, sentAt: sentAt,
+                                             part: UInt8(index), partCount: UInt8(parts.count))
+            texts.append(try FellshipEnvelope.sealRoomPayload(.chat(chat),
+                                                              roomID: room.id, roomKey: key))
+        }
+        // Mesh frames arrive in any order.
+        for text in texts.reversed() {
+            engine.handleChannelText(text)
+        }
+        let received = engine.messages(threadID: room.id).filter { !$0.isSystemEvent }
+        XCTAssertEqual(received.count, 1, "parts must merge into one message")
+        XCTAssertEqual(received.first?.text, "The quick brown fox jumps over the lazy dog.")
+
+        // Replaying every part again must not duplicate the message.
+        for text in texts {
+            engine.handleChannelText(text)
+        }
+        XCTAssertEqual(engine.messages(threadID: room.id).filter { !$0.isSystemEvent }.count, 1)
+    }
+
     func testDuplicateChatDeduped() throws {
         let room = makeGeofencedRoom()
         let key = try XCTUnwrap(CryptoService.roomKey(for: room.id))

@@ -29,6 +29,7 @@ actor MeshSession {
     private var pumpTask: Task<Void, Never>?
     private var stateTask: Task<Void, Never>?
     private var syncing = false
+    private var advertRefreshInFlight = false
 
     private final class PendingRequest {
         enum Kind {
@@ -328,24 +329,43 @@ actor MeshSession {
     private func handleAdvertPush(publicKey: Data) async {
         // A new advert means fresh position/name data — refresh contacts and
         // surface the advertiser to listeners (public-room auto-invite hooks
-        // in here).
-        if let refreshed = try? await getContacts(),
-           let contact = refreshed.first(where: { $0.publicKey == publicKey }) ?? contacts[publicKey] {
+        // in here). Advert bursts are common on a busy mesh; one refresh at a
+        // time is plenty.
+        if !advertRefreshInFlight {
+            advertRefreshInFlight = true
+            _ = try? await getContacts()
+            advertRefreshInFlight = false
+        }
+        if let contact = contacts[publicKey] {
             emit(.advertHeard(contact))
-        } else if let known = contacts[publicKey] {
-            emit(.advertHeard(known))
         }
     }
 
     /// Pulls queued messages off the radio until it reports none remain.
     private func drainMessageQueue() async {
         guard !syncing else { return }
+        // No connected-state check: the cached state lags the transport right
+        // after connect, and the request itself fails cleanly on a dead link.
+        guard pumpTask != nil else { return }
         syncing = true
         defer { syncing = false }
+        var exhaustedCap = true
+        defer {
+            // Hit the per-drain cap with messages possibly remaining? Go
+            // again rather than stranding them until the next push.
+            if exhaustedCap {
+                Task { await self.drainMessageQueue() }
+            }
+        }
         for _ in 0..<64 { // hard cap per drain to stay responsive
-            guard state.isConnected else { break }
-            guard let events = try? await request(MeshCore.syncNextMessageFrame(), kind: .nextMessage) else { break }
-            guard let event = events.first else { break }
+            guard let events = try? await request(MeshCore.syncNextMessageFrame(), kind: .nextMessage) else {
+                exhaustedCap = false
+                break
+            }
+            guard let event = events.first else {
+                exhaustedCap = false
+                break
+            }
             switch event {
             case .contactMessage(let message):
                 var sender = contactMatching(prefix: message.senderPublicKeyPrefix)
@@ -360,8 +380,10 @@ actor MeshSession {
             case .channelMessage(let message):
                 emit(.channelMessage(message))
             case .noMoreMessages:
+                exhaustedCap = false
                 return
             default:
+                exhaustedCap = false
                 return
             }
         }

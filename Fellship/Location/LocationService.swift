@@ -106,8 +106,15 @@ final class LocationService: NSObject, ObservableObject {
         headingDegrees = nil
     }
 
-    /// One shared GPS read: radio first, phone fallback (spec §4).
+    private var tickInProgress = false
+
+    /// One shared GPS read: radio first, phone fallback (spec §4). A slow
+    /// radio read must never overlap the next timer tick — that would
+    /// double-broadcast presence for every room.
     private func tick() async {
+        guard !tickInProgress else { return }
+        tickInProgress = true
+        defer { tickInProgress = false }
         var fix: LocationFix?
 
         if radioConnected, let session = meshSession {

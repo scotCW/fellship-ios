@@ -50,10 +50,6 @@ extension RoomEngine {
         return "Member \(id.prefix(6))"
     }
 
-    private var myWirePrefixHex: String {
-        FellshipEnvelope.wirePrefix(ofMemberID: myIdentityHex).hexEncoded
-    }
-
     // MARK: - Room channel traffic
 
     func handleChannelText(_ text: String) {
@@ -118,11 +114,17 @@ extension RoomEngine {
 
         var chat = chat
         if chat.partCount > 1 {
-            // Buffer parts until the set completes; stale partials expire.
+            // Buffer parts until the set completes; stale partials expire and
+            // the buffer is capped so a malformed sender can't grow memory.
             let cutoff = Date().addingTimeInterval(-300)
             for (id, started) in chatPartsStarted where started < cutoff {
                 chatParts[id] = nil
                 chatPartsStarted[id] = nil
+            }
+            if chatParts.count >= 16,
+               let oldest = chatPartsStarted.min(by: { $0.value < $1.value }) {
+                chatParts[oldest.key] = nil
+                chatPartsStarted[oldest.key] = nil
             }
             var parts = chatParts[chat.messageID] ?? [:]
             if parts.isEmpty { chatPartsStarted[chat.messageID] = Date() }

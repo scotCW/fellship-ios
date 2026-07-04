@@ -10,6 +10,9 @@ struct ChatView: View {
 
     @State private var draft = ""
     @State private var zoneOnly = false
+    /// Cached so typing (which re-renders the view) doesn't hit SQLite per
+    /// keystroke; reloaded only when the engine bumps its revision.
+    @State private var messages: [RoomMessage] = []
 
     /// LoRa frames are tiny. Room messages carry encryption overhead, so
     /// their budget is tighter than plain direct messages.
@@ -29,11 +32,13 @@ struct ChatView: View {
                     .padding(.vertical, 8)
                 }
                 .onChange(of: engine.chatRevision) {
+                    messages = engine.messages(threadID: threadID)
                     if let last = messages.last {
                         withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                     }
                 }
                 .onAppear {
+                    messages = engine.messages(threadID: threadID)
                     if let last = messages.last {
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
@@ -41,11 +46,6 @@ struct ChatView: View {
             }
             composer
         }
-    }
-
-    private var messages: [RoomMessage] {
-        _ = engine.chatRevision // dependency for re-query
-        return engine.messages(threadID: threadID)
     }
 
     private var composer: some View {

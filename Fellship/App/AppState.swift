@@ -29,6 +29,9 @@ final class AppState: ObservableObject {
     /// treated as a link failure to recover from.
     private var userInitiatedDisconnect = false
     private var reconnectTask: Task<Void, Never>?
+    /// Serializes connection attempts: a user tap racing the auto-reconnect
+    /// must never tear down the link the other one just established.
+    private var isConnecting = false
 
     init() {
         settings = AppSettings()
@@ -46,8 +49,10 @@ final class AppState: ObservableObject {
         if settings.demoMode {
             Task { await enableDemoMode() }
         } else if settings.lastRadioIdentifier != nil {
-            // Try to quietly resume the last radio.
-            Task { await reconnectLastRadio() }
+            // Quietly resume the last radio, with retries — Bluetooth can
+            // take several seconds to power up after launch.
+            ensureTransport()
+            scheduleReconnect(firstDelaySeconds: 2)
         }
     }
 
@@ -87,6 +92,9 @@ final class AppState: ObservableObject {
     }
 
     func connect(to radio: DiscoveredRadio) async {
+        guard !isConnecting, !transportState.isConnected else { return }
+        isConnecting = true
+        defer { isConnecting = false }
         ensureTransport()
         guard let transport else { return }
         userInitiatedDisconnect = false
@@ -139,15 +147,17 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Reconnects with backoff after an unexpected link drop.
-    private func scheduleReconnect() {
+    /// Reconnects with backoff after an unexpected link drop (or at launch).
+    private func scheduleReconnect(firstDelaySeconds: Double = 5) {
         guard reconnectTask == nil else { return }
         guard let targetID = settings.demoMode ? "demo-radio" : settings.lastRadioIdentifier else { return }
         reconnectTask = Task { [weak self] in
-            defer { Task { @MainActor [weak self] in self?.reconnectTask = nil } }
+            defer { self?.reconnectTask = nil }
             for attempt in 0..<6 {
-                let delay = UInt64(min(60, 5 * (1 << attempt))) * 1_000_000_000
-                try? await Task.sleep(nanoseconds: delay)
+                let delay = attempt == 0
+                    ? firstDelaySeconds
+                    : min(60, 5 * Double(1 << attempt))
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 guard let self, !Task.isCancelled else { return }
                 if self.transportState.isConnected || self.userInitiatedDisconnect { return }
                 await self.connect(to: DiscoveredRadio(id: targetID, name: "Saved radio", rssi: 0))
@@ -156,7 +166,10 @@ final class AppState: ObservableObject {
         }
     }
 
-    func disconnect() {
+    /// - Parameter forgetRadio: when true (a deliberate user disconnect),
+    ///   drop the saved radio so the app stops trying to resume it. Internal
+    ///   transitions (demo toggling) keep it.
+    func disconnect(forgetRadio: Bool = true) {
         // Stays set until the next explicit connect — the disconnected state
         // event arrives asynchronously, after this method returns.
         userInitiatedDisconnect = true
@@ -176,7 +189,9 @@ final class AppState: ObservableObject {
         batteryMilliVolts = nil
         batteryTimer?.invalidate()
         batteryTimer = nil
-        settings.lastRadioIdentifier = nil
+        if forgetRadio {
+            settings.lastRadioIdentifier = nil
+        }
     }
 
     private func ensureTransport() {
@@ -214,14 +229,6 @@ final class AppState: ObservableObject {
         })
     }
 
-    private func reconnectLastRadio() async {
-        guard let id = settings.lastRadioIdentifier else { return }
-        ensureTransport()
-        // Give Bluetooth a moment to power on, then try a direct connect.
-        try? await Task.sleep(nanoseconds: 1_200_000_000)
-        await connect(to: DiscoveredRadio(id: id, name: "Saved radio", rssi: 0))
-    }
-
     private func startBatteryPolling() {
         batteryTimer?.invalidate()
         let t = Timer(timeInterval: 300, repeats: true) { [weak self] _ in
@@ -239,7 +246,9 @@ final class AppState: ObservableObject {
 
     func enableDemoMode() async {
         settings.demoMode = true
-        disconnect()
+        // Keep the saved real radio — the user is trying demo mode, not
+        // forgetting their hardware.
+        disconnect(forgetRadio: false)
         installTransport(SimulatedTransport())
         transport?.startScanning()
         try? await Task.sleep(nanoseconds: 900_000_000)
@@ -250,8 +259,15 @@ final class AppState: ObservableObject {
 
     func disableDemoMode() {
         settings.demoMode = false
-        disconnect()
+        disconnect(forgetRadio: false)
         engine.removeDemoRooms()
         installTransport(BLETransport())
+        if settings.lastRadioIdentifier != nil {
+            // Resume the real radio the user had before demo mode. The
+            // disconnect above was ours, not the user's — clear the flag or
+            // the reconnect loop will refuse to run.
+            userInitiatedDisconnect = false
+            scheduleReconnect(firstDelaySeconds: 2)
+        }
     }
 }

@@ -46,8 +46,15 @@ final class LocalStore: @unchecked Sendable {
             id TEXT PRIMARY KEY,
             thread_id TEXT NOT NULL,
             sent_at REAL NOT NULL,
+            scope TEXT NOT NULL DEFAULT '',
             json BLOB NOT NULL
         );
+        """)
+        // Upgrade pre-scope databases; harmless if the column already exists.
+        try? db.exec("ALTER TABLE messages ADD COLUMN scope TEXT NOT NULL DEFAULT '';")
+        try? db.exec("""
+        UPDATE messages SET scope='direct'
+        WHERE scope='' AND json LIKE '%"scope":"direct"%';
         """)
         try db.exec("CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id, sent_at);")
         try db.exec("""
@@ -109,10 +116,11 @@ final class LocalStore: @unchecked Sendable {
     func saveMessage(_ message: RoomMessage) throws {
         let data = try encoder.encode(message)
         try db.exec("""
-        INSERT INTO messages(id, thread_id, sent_at, json) VALUES(?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET json=excluded.json;
+        INSERT INTO messages(id, thread_id, sent_at, scope, json) VALUES(?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET json=excluded.json, scope=excluded.scope;
         """, [.text(message.id), .text(message.threadID),
-              .real(message.sentAt.timeIntervalSince1970), .blob(data)])
+              .real(message.sentAt.timeIntervalSince1970),
+              .text(message.scope.rawValue), .blob(data)])
     }
 
     func messages(threadID: String, limit: Int = 500) throws -> [RoomMessage] {
@@ -134,7 +142,7 @@ final class LocalStore: @unchecked Sendable {
     func directThreadIDs() throws -> [String] {
         try db.query("""
         SELECT thread_id, MAX(sent_at) AS latest FROM messages
-        WHERE json LIKE '%"scope":"direct"%'
+        WHERE scope='direct'
         GROUP BY thread_id ORDER BY latest DESC;
         """).compactMap { $0["thread_id"]?.textValue }
     }
