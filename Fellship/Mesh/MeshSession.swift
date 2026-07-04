@@ -30,7 +30,7 @@ actor MeshSession {
     private var stateTask: Task<Void, Never>?
     private var syncing = false
 
-    private struct PendingRequest {
+    private final class PendingRequest {
         enum Kind {
             case simple                 // ok/err/selfInfo/etc — single frame
             case contacts               // contactsStart ... endOfContacts
@@ -38,8 +38,26 @@ actor MeshSession {
         }
         let id = UUID()
         let kind: Kind
-        let continuation: CheckedContinuation<[MeshCore.Event], Error>
+        /// nil once resumed. A resumed-but-unanswered request stays queued as
+        /// a "zombie" so it still consumes the radio's (in-order) reply —
+        /// otherwise one timeout would desync every later correlation.
+        var continuation: CheckedContinuation<[MeshCore.Event], Error>?
         var accumulated: [MeshCore.Event] = []
+
+        init(kind: Kind, continuation: CheckedContinuation<[MeshCore.Event], Error>) {
+            self.kind = kind
+            self.continuation = continuation
+        }
+
+        func resume(returning events: [MeshCore.Event]) {
+            continuation?.resume(returning: events)
+            continuation = nil
+        }
+
+        func resume(throwing error: Error) {
+            continuation?.resume(throwing: error)
+            continuation = nil
+        }
     }
 
     enum SessionError: Error {
@@ -111,7 +129,8 @@ actor MeshSession {
     private func failAllPending() {
         let requests = pending
         pending.removeAll()
-        requests.forEach { $0.continuation.resume(throwing: SessionError.radioError) }
+        sendQueue.removeAll()
+        requests.forEach { $0.resume(throwing: SessionError.radioError) }
     }
 
     // MARK: - Commands
@@ -204,18 +223,25 @@ actor MeshSession {
 
     // MARK: - Request plumbing
 
+    /// MeshCore firmware answers commands strictly in order, so correlation
+    /// is FIFO — which only works if frames also *leave* in the same order
+    /// the pending queue was built. All sends therefore flow through one
+    /// in-actor queue; per-request tasks would race and cross-match replies.
+    private var sendQueue: [(frame: Data, requestID: UUID)] = []
+    private var sendPumpRunning = false
+
     private func request(_ frame: Data, kind: PendingRequest.Kind,
                          timeout: TimeInterval = 10) async throws -> [MeshCore.Event] {
-        guard state.isConnected else { throw SessionError.notStarted }
+        // No connected-state guard here: the session's cached state lags the
+        // transport by a task hop right after connect, and transport.send
+        // already throws when there's genuinely no link.
         return try await withCheckedThrowingContinuation { continuation in
             let req = PendingRequest(kind: kind, continuation: continuation)
             pending.append(req)
-            Task {
-                do {
-                    try await transport.send(frame)
-                } catch {
-                    self.fail(requestID: req.id, with: error)
-                }
+            sendQueue.append((frame, req.id))
+            if !sendPumpRunning {
+                sendPumpRunning = true
+                Task { await self.pumpSends() }
             }
             Task {
                 try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
@@ -224,10 +250,31 @@ actor MeshSession {
         }
     }
 
+    private func pumpSends() async {
+        while !sendQueue.isEmpty {
+            let (frame, requestID) = sendQueue.removeFirst()
+            // Skip frames whose request already failed before sending.
+            guard pending.contains(where: { $0.id == requestID }) else { continue }
+            do {
+                try await transport.send(frame)
+            } catch {
+                fail(requestID: requestID, with: error)
+            }
+        }
+        sendPumpRunning = false
+    }
+
     private func fail(requestID: UUID, with error: Error) {
         guard let index = pending.firstIndex(where: { $0.id == requestID }) else { return }
-        let req = pending.remove(at: index)
-        req.continuation.resume(throwing: error)
+        let req = pending[index]
+        if let queueIndex = sendQueue.firstIndex(where: { $0.requestID == requestID }) {
+            // Never sent: safe to drop entirely.
+            sendQueue.remove(at: queueIndex)
+            pending.remove(at: index)
+        }
+        // If it was already sent, it stays queued as a zombie to swallow the
+        // radio's eventual reply.
+        req.resume(throwing: error)
     }
 
     // MARK: - Frame handling
@@ -261,24 +308,20 @@ actor MeshSession {
     }
 
     private func deliverToPending(_ event: MeshCore.Event) {
-        guard !pending.isEmpty else { return }
-        var request = pending.removeFirst()
+        guard let request = pending.first else { return }
 
         switch request.kind {
-        case .simple:
-            request.continuation.resume(returning: [event])
+        case .simple, .nextMessage:
+            pending.removeFirst()
+            request.resume(returning: [event]) // no-op for zombies
         case .contacts:
             switch event {
             case .contactsStart, .contact:
-                request.accumulated.append(event)
-                pending.insert(request, at: 0) // keep accumulating
-            case .endOfContacts:
-                request.continuation.resume(returning: request.accumulated)
-            default:
-                request.continuation.resume(returning: request.accumulated)
+                request.accumulated.append(event) // keep accumulating
+            default: // endOfContacts or anything unexpected ends the request
+                pending.removeFirst()
+                request.resume(returning: request.accumulated)
             }
-        case .nextMessage:
-            request.continuation.resume(returning: [event])
         }
     }
 
