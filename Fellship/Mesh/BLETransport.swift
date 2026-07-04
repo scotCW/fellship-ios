@@ -21,6 +21,8 @@ final class BLETransport: NSObject, MeshTransport, @unchecked Sendable {
     }
     private var found: [String: (peripheral: CBPeripheral, rssi: Int)] = [:]
     private var connectContinuation: CheckedContinuation<Void, Error>?
+    /// Distinguishes connect attempts so a stale timeout can't kill a newer one.
+    private var connectAttemptID = UUID()
     private var pendingWrites: [(Data, CheckedContinuation<Void, Error>)] = []
     private var writeInFlight = false
     private var shouldScanWhenPoweredOn = false
@@ -71,6 +73,10 @@ final class BLETransport: NSObject, MeshTransport, @unchecked Sendable {
                     continuation.resume(throwing: TransportError.bluetoothUnavailable)
                     return
                 }
+                guard connectContinuation == nil else {
+                    continuation.resume(throwing: TransportError.writeFailed("A connection attempt is already in progress."))
+                    return
+                }
                 var target = found[radioID]?.peripheral
                 if target == nil, let uuid = UUID(uuidString: radioID) {
                     target = central.retrievePeripherals(withIdentifiers: [uuid]).first
@@ -81,13 +87,17 @@ final class BLETransport: NSObject, MeshTransport, @unchecked Sendable {
                 }
                 central.stopScan()
                 connectContinuation = continuation
+                let attemptID = UUID()
+                connectAttemptID = attemptID
                 peripheral = target
                 target.delegate = self
                 currentState = .connecting
                 central.connect(target, options: nil)
                 // CoreBluetooth never times out connects on its own.
                 queue.asyncAfter(deadline: .now() + Self.connectTimeout) { [weak self] in
-                    guard let self, self.connectContinuation != nil else { return }
+                    guard let self,
+                          self.connectContinuation != nil,
+                          self.connectAttemptID == attemptID else { return }
                     self.connectFailed("The radio didn't respond. Make sure it's powered on and in range.")
                 }
             }
