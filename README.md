@@ -114,8 +114,11 @@ is how the app logic is exercised.
 
 ## For the app owner
 
-- Replace the donation URL placeholder in `AppSettings.donationURLPlaceholder`
-  and the repo link in `SettingsView`.
+- Donations show a crypto address in-app (tap-to-copy + QR), configured via
+  `AppSettings.donationCryptoAddress` / `donationCryptoCurrency`. Update the
+  repo link in `SettingsView`. Note for App Store submission: review tends to
+  scrutinize donation mechanics (guideline 3.1.1) — be ready to explain that
+  this is a plain informational address with no payment plumbing.
 - App Review: the privacy disclosure lives in Settings → Privacy & your data;
   the "not a safety device" wording is there too. Review Section 13 of the
   spec before submitting.

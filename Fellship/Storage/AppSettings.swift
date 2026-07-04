@@ -30,7 +30,10 @@ enum DistanceUnits: String, CaseIterable, Identifiable, Codable {
 /// map URL template (which may contain the user's API key) lives in Keychain.
 @MainActor
 final class AppSettings: ObservableObject {
-    static let donationURLPlaceholder = "https://example.com/replace-with-your-donation-page"
+    /// Shown in Settings → Support this app, with tap-to-copy and a QR code.
+    /// No payment plumbing, no server — just the owner's address (spec §10).
+    static let donationCryptoCurrency = "Monero (XMR)"
+    static let donationCryptoAddress = "85f9zpwoRWbaZsZToh44Aei9qohnEVS6KB8yjjQRbmvUEUKkYnD5jvy368xTjHgbRq7DvbpXz3xgmaqaCR6hCxLnA8B3k3A"
 
     private let defaults: UserDefaults
     private let keychain = KeychainStore(service: "app.fellship.settings")

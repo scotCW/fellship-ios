@@ -1,5 +1,5 @@
 import SwiftUI
-import SafariServices
+import UIKit
 
 /// The global settings page — contents mandated by spec §9, plus donations
 /// (§10) and the legal disclosures (§13).
@@ -10,7 +10,8 @@ struct SettingsView: View {
     @EnvironmentObject private var notifications: NotificationService
 
     @State private var showCustomDisclaimer = false
-    @State private var showDonation = false
+    @State private var showDonationQR = false
+    @State private var copiedDonationAddress = false
     @State private var customDraft = ""
     @State private var customDraftLoaded = false
 
@@ -36,8 +37,9 @@ struct SettingsView: View {
             } message: {
                 Text(MapDisclaimers.customFull)
             }
-            .sheet(isPresented: $showDonation) {
-                SafariView(url: URL(string: AppSettings.donationURLPlaceholder)!)
+            .sheet(isPresented: $showDonationQR) {
+                DonationQRSheet()
+                    .presentationDetents([.medium])
             }
         }
     }
@@ -212,17 +214,46 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: Donations (spec §10 — external link only, no IAP)
+    // MARK: Donations (spec §10 — no IAP, no payment plumbing, no server)
 
     private var donationSection: some View {
         Section {
-            Button {
-                showDonation = true
-            } label: {
-                Label("Support this app", systemImage: "heart")
+            VStack(alignment: .leading, spacing: 8) {
+                Text(AppSettings.donationCryptoCurrency)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(AppSettings.donationCryptoAddress)
+                    .font(.caption2.monospaced())
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                HStack(spacing: 10) {
+                    Button {
+                        UIPasteboard.general.string = AppSettings.donationCryptoAddress
+                        copiedDonationAddress = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            copiedDonationAddress = false
+                        }
+                    } label: {
+                        Label(copiedDonationAddress ? "Copied" : "Copy address",
+                              systemImage: copiedDonationAddress ? "checkmark" : "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    Button {
+                        showDonationQR = true
+                    } label: {
+                        Label("Show QR", systemImage: "qrcode")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
             }
+            .padding(.vertical, 2)
+        } header: {
+            Label("Support this app", systemImage: "heart")
         } footer: {
-            Text("Fellship is free, with no ads, no subscriptions and no server costs. If you'd like to support development, you can donate — the link opens in a browser.")
+            Text("Fellship is free, with no ads, no subscriptions and no server costs. If you'd like to support development, donations to this address are appreciated.")
         }
     }
 
@@ -272,14 +303,41 @@ struct PrivacyDisclosureView: View {
     }
 }
 
-struct SafariView: UIViewControllerRepresentable {
-    let url: URL
+/// Full-size scannable donation address.
+struct DonationQRSheet: View {
+    @Environment(\.dismiss) private var dismiss
 
-    func makeUIViewController(context: Context) -> SFSafariViewController {
-        SFSafariViewController(url: url)
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                if let image = QRSupport.generate(from: AppSettings.donationCryptoAddress) {
+                    Image(uiImage: image)
+                        .interpolation(.none)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 260)
+                        .padding(10)
+                        .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                }
+                Text(AppSettings.donationCryptoCurrency)
+                    .font(.headline)
+                Text(AppSettings.donationCryptoAddress)
+                    .font(.caption2.monospaced())
+                    .multilineTextAlignment(.center)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 24)
+                Spacer()
+            }
+            .padding(.top, 24)
+            .navigationTitle("Donate")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
     }
-
-    func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}
 }
 
 extension Bundle {
