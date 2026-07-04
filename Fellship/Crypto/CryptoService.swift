@@ -28,14 +28,23 @@ enum CryptoService {
 
     // MARK: - Identity
 
-    /// Loads the device identity, creating it on first use.
+    private static let identityLock = NSLock()
+    nonisolated(unsafe) private static var cachedIdentity: Curve25519.KeyAgreement.PrivateKey?
+
+    /// Loads the device identity, creating it on first use. Cached in memory
+    /// so a transiently locked Keychain can never mint a second identity.
     static func identity() -> Curve25519.KeyAgreement.PrivateKey {
+        identityLock.lock()
+        defer { identityLock.unlock() }
+        if let cachedIdentity { return cachedIdentity }
         if let raw = keychain.load(identityKeyName),
            let key = try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: raw) {
+            cachedIdentity = key
             return key
         }
         let key = Curve25519.KeyAgreement.PrivateKey()
         try? keychain.save(key.rawRepresentation, for: identityKeyName)
+        cachedIdentity = key
         return key
     }
 

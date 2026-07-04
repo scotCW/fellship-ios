@@ -30,6 +30,8 @@ final class LocationService: NSObject, ObservableObject {
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+        manager.distanceFilter = 20
+        manager.pausesLocationUpdatesAutomatically = true
         authorization = manager.authorizationStatus
     }
 
@@ -39,6 +41,14 @@ final class LocationService: NSObject, ObservableObject {
 
     func setRadioConnected(_ connected: Bool) {
         radioConnected = connected
+        // The phone's GPS runs continuously only while it's the active
+        // source; with radio GPS primary, keeping CoreLocation streaming
+        // would just burn battery (spec §4's fallback is explicit).
+        if connected {
+            manager.stopUpdatingLocation()
+        } else if authorization == .authorizedWhenInUse || authorization == .authorizedAlways {
+            manager.startUpdatingLocation()
+        }
     }
 
     func requestWhenInUseAuthorization() {
@@ -62,7 +72,8 @@ final class LocationService: NSObject, ObservableObject {
     func start(intervalSeconds: TimeInterval) {
         self.intervalSeconds = max(10, intervalSeconds)
         timer?.invalidate()
-        if authorization == .authorizedWhenInUse || authorization == .authorizedAlways {
+        if !radioConnected,
+           authorization == .authorizedWhenInUse || authorization == .authorizedAlways {
             manager.startUpdatingLocation()
         }
         let t = Timer(timeInterval: self.intervalSeconds, repeats: true) { [weak self] _ in
@@ -129,7 +140,7 @@ extension LocationService: CLLocationManagerDelegate {
         Task { @MainActor in
             self.authorization = status
             if status == .authorizedWhenInUse || status == .authorizedAlways {
-                manager.startUpdatingLocation()
+                self.setRadioConnected(self.radioConnected) // re-evaluate GPS source
             }
         }
     }
