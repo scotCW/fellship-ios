@@ -54,6 +54,7 @@ struct MapCanvas: UIViewRepresentable {
         mapView.setCenter(CLLocationCoordinate2D(latitude: 37.77, longitude: -122.45),
                           zoomLevel: 11, animated: false)
         context.coordinator.mapView = mapView
+        context.coordinator.appliedStyleURL = styleURL
 
         let trace = UIPanGestureRecognizer(target: context.coordinator,
                                            action: #selector(Coordinator.handleTrace(_:)))
@@ -106,9 +107,14 @@ struct MapCanvas: UIViewRepresentable {
         var appliedStyleURL: URL?
         var appliedCameraID: UUID?
 
+        /// Point annotation that carries its marker kind, so styling doesn't
+        /// have to abuse title/subtitle fields.
+        final class FellshipPointAnnotation: MLNPointAnnotation {
+            var kind: MapMarker.Kind = .member
+        }
+
         private var currentAnnotations: [MLNAnnotation] = []
         private var lastOverlayFingerprint: Int = 0
-        private var markerKinds: [String: MapMarker.Kind] = [:] // keyed by marker title tag
 
         init(parent: MapCanvas) {
             self.parent = parent
@@ -134,7 +140,6 @@ struct MapCanvas: UIViewRepresentable {
                 mapView.removeAnnotations(currentAnnotations)
                 currentAnnotations.removeAll()
             }
-            markerKinds.removeAll()
 
             for overlay in boundaries {
                 let shape = Self.shape(for: overlay.boundary, identifier: overlay.id,
@@ -160,12 +165,11 @@ struct MapCanvas: UIViewRepresentable {
             }
 
             for marker in markers {
-                let point = MLNPointAnnotation()
+                let point = FellshipPointAnnotation()
                 point.coordinate = CLLocationCoordinate2D(latitude: marker.coordinate.latitude,
                                                           longitude: marker.coordinate.longitude)
                 point.title = marker.name
-                markerKinds[marker.name + "|" + marker.id] = marker.kind
-                point.subtitle = marker.name + "|" + marker.id
+                point.kind = marker.kind
                 mapView.addAnnotation(point)
                 currentAnnotations.append(point)
             }
@@ -221,9 +225,8 @@ struct MapCanvas: UIViewRepresentable {
         // MARK: Marker images
 
         func mapView(_ mapView: MLNMapView, imageFor annotation: MLNAnnotation) -> MLNAnnotationImage? {
-            guard let point = annotation as? MLNPointAnnotation,
-                  let tag = point.subtitle ?? point.title else { return nil }
-            let kind = markerKinds[tag] ?? .member
+            guard let point = annotation as? FellshipPointAnnotation else { return nil }
+            let kind = point.kind
             let name = point.title ?? "?"
             let reuseID = "marker-\(kind)-\(name)"
             if let existing = mapView.dequeueReusableAnnotationImage(withIdentifier: reuseID) {

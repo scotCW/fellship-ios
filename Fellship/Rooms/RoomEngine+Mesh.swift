@@ -4,6 +4,8 @@ import CryptoKit
 // MARK: - Incoming mesh traffic, invites, QR joining, demo seeding.
 
 extension RoomEngine {
+    private static let directAssembler = FellshipEnvelope.DirectAssembler()
+
     func handleMeshEvent(_ event: MeshEvent) async {
         switch event {
         case .channelMessage(let message):
@@ -18,7 +20,7 @@ extension RoomEngine {
                 updateDelivery(messageID: messageID, threadHint: nil, to: .heard)
             }
         case .stateChanged, .selfInfoUpdated, .batteryUpdated, .deviceInfoUpdated:
-            break // owned by AppState / RadioViewModel
+            break // owned by AppState
         }
     }
 
@@ -28,66 +30,83 @@ extension RoomEngine {
         nearbyContacts = list.sorted { $0.lastAdvert > $1.lastAdvert }
     }
 
+    // MARK: - Wire member-ID resolution
+
+    /// Wire payloads carry an 8-byte identity prefix. Resolve it to a full
+    /// member where possible; otherwise the prefix itself acts as a
+    /// provisional ID (full IDs start with it, so upgrades are seamless).
+    func resolveMemberID(_ wireID: String, roomID: String) -> String {
+        if let member = (membersCache[roomID] ?? []).first(where: { $0.id.hasPrefix(wireID) }) {
+            return member.id
+        }
+        return wireID
+    }
+
+    func displayName(forMemberID id: String, roomID: String) -> String {
+        if id == myIdentityHex { return myDisplayName }
+        if let member = (membersCache[roomID] ?? []).first(where: { $0.id.hasPrefix(id) || id.hasPrefix($0.id) }) {
+            return member.displayName
+        }
+        return "Member \(id.prefix(6))"
+    }
+
+    private var myWirePrefixHex: String {
+        FellshipEnvelope.wirePrefix(ofMemberID: myIdentityHex).hexEncoded
+    }
+
     // MARK: - Room channel traffic
 
     func handleChannelText(_ text: String) {
         guard let prefix = FellshipEnvelope.roomIDPrefix(fromText: text),
               let room = rooms.first(where: { $0.id.hasPrefix(prefix) }),
               let key = CryptoService.roomKey(for: room.id),
-              let (type, body) = try? FellshipEnvelope.openRoomText(text, roomID: room.id, roomKey: key)
+              let payload = try? FellshipEnvelope.openRoomPayload(text, roomID: room.id, roomKey: key)
         else { return } // not ours / not decryptable — ignore silently
 
-        switch type {
-        case .presence:
-            guard let p = try? FellshipEnvelope.decodeBody(FellshipEnvelope.Presence.self, from: body),
-                  p.memberID != myIdentityHex else { return }
+        switch payload {
+        case .presence(let p):
+            guard !myIdentityHex.hasPrefix(p.memberID) else { return }
             applyPresence(p, in: room)
-        case .chat, .zoneChat:
-            guard let chat = try? FellshipEnvelope.decodeBody(FellshipEnvelope.Chat.self, from: body),
-                  chat.memberID != myIdentityHex else { return }
-            applyChat(chat, zoneScoped: type == .zoneChat, in: room)
-        case .zoneEvent:
-            guard let event = try? FellshipEnvelope.decodeBody(FellshipEnvelope.ZoneEvent.self, from: body),
-                  event.memberID != myIdentityHex else { return }
+        case .chat(let chat):
+            guard !myIdentityHex.hasPrefix(chat.memberID) else { return }
+            applyChat(chat, in: room)
+        case .zoneEvent(let event):
+            guard !myIdentityHex.hasPrefix(event.memberID) else { return }
             applyZoneEvent(event, in: room)
-        case .memberAnnounce:
-            guard let announce = try? FellshipEnvelope.decodeBody(FellshipEnvelope.MemberAnnounce.self, from: body) else { return }
+        case .memberAnnounce(let announce):
             noteMember(announce.member, in: room.id)
-        case .inviteOffer, .inviteAccept, .roomKeyDelivery:
-            break // invite payloads only travel over direct messages
         }
     }
 
     private func applyPresence(_ p: FellshipEnvelope.Presence, in room: Room) {
-        // A presence packet's coordinates are honored only if this room
-        // shares locations — a belt-and-braces check on top of the sender's
-        // own broadcast-level enforcement.
+        let memberID = resolveMemberID(p.memberID, roomID: room.id)
+        // Coordinates are honored only if this room shares locations — a
+        // belt-and-braces check on top of the sender's broadcast-level
+        // enforcement.
         let coordinate = room.sharesPreciseLocation ? p.coordinate : nil
-        let previous = presence[room.id]?[p.memberID]
-        presence[room.id, default: [:]][p.memberID] = MemberPresence(
-            memberID: p.memberID,
+        let previous = presence[room.id]?[memberID]
+        presence[room.id, default: [:]][memberID] = MemberPresence(
+            memberID: memberID,
             isInside: p.isInside,
             coordinate: coordinate,
             lastHeard: Date())
-
-        noteMember(Member(id: p.memberID, displayName: p.name,
-                          radioPublicKey: nil, joinedAt: Date()),
-                   in: room.id, keepExistingName: true)
 
         // Range-based rooms: fresh presence from someone previously silent
         // means they came into range (spec §3.1B).
         if room.kind == .rangeBased, !room.isMuted {
             let wasFresh = previous?.isFresh(interval: settings.updateIntervalSeconds) ?? false
             if !wasFresh {
-                notifications.post(.presenceJoined(memberName: p.name, roomName: room.name), threadID: room.id)
+                notifications.post(.presenceJoined(memberName: displayName(forMemberID: memberID, roomID: room.id),
+                                                   roomName: room.name),
+                                   threadID: room.id)
             }
         }
     }
 
-    private func applyChat(_ chat: FellshipEnvelope.Chat, zoneScoped: Bool, in room: Room) {
+    private func applyChat(_ chat: FellshipEnvelope.Chat, in room: Room) {
         // Zone-scoped delivery (spec §5.2): if I'm not currently in the zone,
         // the message is not for me right now — drop it entirely.
-        if zoneScoped {
+        if chat.zoneScoped {
             let amPresent: Bool
             switch room.kind {
             case .geofenced: amPresent = myInside[room.id] ?? false
@@ -97,11 +116,13 @@ extension RoomEngine {
         }
         guard !seenMessageIDs.contains(chat.messageID) else { return }
         seenMessageIDs.insert(chat.messageID)
+        let senderID = resolveMemberID(chat.memberID, roomID: room.id)
+        let senderName = displayName(forMemberID: senderID, roomID: room.id)
         let message = RoomMessage(id: chat.messageID,
                                   threadID: room.id,
-                                  scope: zoneScoped ? .zone : .room,
-                                  senderID: chat.memberID,
-                                  senderName: chat.name,
+                                  scope: chat.zoneScoped ? .zone : .room,
+                                  senderID: senderID,
+                                  senderName: senderName,
                                   text: chat.text,
                                   sentAt: chat.sentAt,
                                   delivery: .received,
@@ -109,18 +130,20 @@ extension RoomEngine {
         try? store.saveMessage(message)
         chatRevision += 1
         if !room.isMuted {
-            notifications.post(.message(senderName: chat.name, roomName: room.name,
+            notifications.post(.message(senderName: senderName, roomName: room.name,
                                         preview: chat.text), threadID: room.id)
         }
     }
 
     private func applyZoneEvent(_ event: FellshipEnvelope.ZoneEvent, in room: Room) {
+        let memberID = resolveMemberID(event.memberID, roomID: room.id)
+        let name = displayName(forMemberID: memberID, roomID: room.id)
         let line = RoomMessage(id: UUID().uuidString,
                                threadID: room.id,
                                scope: .room,
-                               senderID: event.memberID,
-                               senderName: event.name,
-                               text: event.didEnter ? "\(event.name) entered the zone" : "\(event.name) left the zone",
+                               senderID: memberID,
+                               senderName: name,
+                               text: event.didEnter ? "\(name) entered the zone" : "\(name) left the zone",
                                sentAt: event.sentAt,
                                delivery: .received,
                                isFromMe: false,
@@ -129,8 +152,8 @@ extension RoomEngine {
         chatRevision += 1
         if !room.isMuted {
             notifications.post(event.didEnter
-                ? .zoneEntry(memberName: event.name, roomName: room.name)
-                : .zoneExit(memberName: event.name, roomName: room.name),
+                ? .zoneEntry(memberName: name, roomName: room.name)
+                : .zoneExit(memberName: name, roomName: room.name),
                 threadID: room.id)
         }
     }
@@ -138,35 +161,50 @@ extension RoomEngine {
     private func noteMember(_ member: Member, in roomID: String, keepExistingName: Bool = false) {
         var list = (try? store.members(roomID: roomID)) ?? []
         if let index = list.firstIndex(where: { $0.id == member.id }) {
-            if !keepExistingName || list[index].displayName.isEmpty {
-                var updated = list[index]
+            var updated = list[index]
+            if !keepExistingName && !member.displayName.isEmpty {
                 updated.displayName = member.displayName
-                if updated.radioPublicKey == nil { updated.radioPublicKey = member.radioPublicKey }
-                list[index] = updated
-                try? store.saveMember(updated, roomID: roomID)
             }
+            if updated.radioPublicKey == nil { updated.radioPublicKey = member.radioPublicKey }
+            list[index] = updated
+            try? store.saveMember(updated, roomID: roomID)
         } else {
             list.append(member)
             try? store.saveMember(member, roomID: roomID)
         }
         membersCache[roomID] = list
+        // Migrate any provisional (prefix-keyed) presence to the full ID.
+        if var roomPresence = presence[roomID] {
+            for (key, value) in roomPresence where member.id.hasPrefix(key) && key != member.id {
+                roomPresence[member.id] = MemberPresence(memberID: member.id,
+                                                         isInside: value.isInside,
+                                                         coordinate: value.coordinate,
+                                                         lastHeard: value.lastHeard)
+                roomPresence[key] = nil
+            }
+            presence[roomID] = roomPresence
+        }
         objectWillChange.send()
     }
 
     // MARK: - Direct messages (invites + plain 1:1 chat, spec §5.3)
 
     func handleDirectText(_ text: String, sender: MeshCore.Contact?) async {
-        if let (type, body) = try? FellshipEnvelope.openDirectText(text) {
-            await handleInvitePayload(type: type, body: body, sender: sender)
-            return
+        let senderHex = sender?.publicKey.hexEncoded ?? "unknown"
+
+        if FellshipEnvelope.isDirectEnvelope(text) {
+            if let (type, body) = Self.directAssembler.ingest(senderHex: senderHex, text: text) {
+                await handleInvitePayload(type: type, body: body, sender: sender)
+            }
+            return // chunk consumed (or awaiting siblings) — never show raw
         }
+
         // Plain 1:1 proximity chat.
         guard let sender else { return }
-        let peerHex = sender.publicKey.hexEncoded
         let message = RoomMessage(id: UUID().uuidString,
-                                  threadID: peerHex,
+                                  threadID: senderHex,
                                   scope: .direct,
-                                  senderID: peerHex,
+                                  senderID: senderHex,
                                   senderName: sender.name,
                                   text: text,
                                   sentAt: Date(),
@@ -175,14 +213,14 @@ extension RoomEngine {
         try? store.saveMessage(message)
         chatRevision += 1
         notifications.post(.message(senderName: sender.name, roomName: nil, preview: text),
-                           threadID: peerHex)
+                           threadID: senderHex)
     }
 
     private func handleInvitePayload(type: FellshipEnvelope.PayloadType, body: Data,
                                      sender: MeshCore.Contact?) async {
         switch type {
         case .inviteOffer:
-            guard let offer = try? FellshipEnvelope.decodeBody(FellshipEnvelope.InviteOffer.self, from: body) else { return }
+            guard let offer = try? FellshipEnvelope.decodeDirectPayload(FellshipEnvelope.InviteOffer.self, from: body) else { return }
             // Already a member, or already holding an invite for this room? Ignore.
             guard !rooms.contains(where: { $0.id == offer.roomID }),
                   !invites.contains(where: { $0.roomID == offer.roomID && $0.state == .received }) else { return }
@@ -207,12 +245,12 @@ extension RoomEngine {
                                threadID: offer.roomID)
 
         case .inviteAccept:
-            guard let accept = try? FellshipEnvelope.decodeBody(FellshipEnvelope.InviteAccept.self, from: body),
+            guard let accept = try? FellshipEnvelope.decodeDirectPayload(FellshipEnvelope.InviteAccept.self, from: body),
                   let room = rooms.first(where: { $0.id == accept.roomID }) else { return }
             await deliverRoomKey(room: room, accept: accept, sender: sender)
 
         case .roomKeyDelivery:
-            guard let delivery = try? FellshipEnvelope.decodeBody(FellshipEnvelope.RoomKeyDelivery.self, from: body) else { return }
+            guard let delivery = try? FellshipEnvelope.decodeDirectPayload(FellshipEnvelope.RoomKeyDelivery.self, from: body) else { return }
             completeJoin(delivery: delivery)
 
         default:
@@ -220,11 +258,21 @@ extension RoomEngine {
         }
     }
 
+    /// Sends a chunked direct payload, one LoRa-sized frame at a time.
+    private func sendDirectPayload<T: Encodable>(_ payload: T, type: FellshipEnvelope.PayloadType,
+                                                 to radioKey: Data) async -> Bool {
+        guard let session,
+              let chunks = try? FellshipEnvelope.directChunks(payload, type: type) else { return false }
+        for chunk in chunks {
+            guard (try? await session.sendDirectText(chunk, to: radioKey)) != nil else { return false }
+        }
+        return true
+    }
+
     // MARK: - Invite flow
 
     /// Manual invite from the member picker (private and public rooms alike).
     func sendInvite(room: Room, to contact: MeshCore.Contact, automatic: Bool = false) async {
-        guard let session else { return }
         let invite = Invite(id: UUID().uuidString,
                             roomID: room.id,
                             roomName: room.name,
@@ -245,27 +293,24 @@ extension RoomEngine {
                                                  inviterIdentityKey: myIdentityHex,
                                                  inviterName: myDisplayName,
                                                  isAutomatic: automatic)
-        guard let text = try? FellshipEnvelope.sealDirectText(offer, type: .inviteOffer) else { return }
-        if (try? await session.sendDirectText(text, to: contact.publicKey)) != nil {
+        if await sendDirectPayload(offer, type: .inviteOffer, to: contact.publicKey) {
             invites.append(invite)
             try? store.saveInvite(invite)
         }
     }
 
     func acceptInvite(_ invite: Invite) async {
-        guard let session, let peerKey = Data(hexEncoded: invite.peerRadioKey) else { return }
+        guard let peerKey = Data(hexEncoded: invite.peerRadioKey) else { return }
         let accept = FellshipEnvelope.InviteAccept(inviteID: invite.id,
                                                    roomID: invite.roomID,
                                                    inviteeIdentityKey: myIdentityHex,
                                                    inviteeName: myDisplayName)
-        guard let text = try? FellshipEnvelope.sealDirectText(accept, type: .inviteAccept) else { return }
-        if (try? await session.sendDirectText(text, to: peerKey)) != nil {
+        if await sendDirectPayload(accept, type: .inviteAccept, to: peerKey) {
             setInviteState(invite.id, to: .accepted)
         }
     }
 
     func declineInvite(_ invite: Invite) {
-        setInviteState(invite.id, to: .declined)
         invites.removeAll { $0.id == invite.id }
         try? store.deleteInvite(invite.id)
     }
@@ -298,27 +343,26 @@ extension RoomEngine {
         let manifest = FellshipEnvelope.RoomManifest(room: room,
                                                      members: manifestMembers,
                                                      roomKeyData: key.dataRepresentation)
+        let recipientRadioKey = sender?.publicKey
+            ?? invites.first(where: { $0.id == accept.inviteID }).flatMap { Data(hexEncoded: $0.peerRadioKey) }
         guard let manifestData = try? FellshipEnvelope.encodeManifest(manifest),
               let sealed = try? CryptoService.sealBox(manifestData, recipientPublicKey: inviteeKey),
-              let text = try? FellshipEnvelope.sealDirectText(
-                FellshipEnvelope.RoomKeyDelivery(inviteID: accept.inviteID,
-                                                 roomID: room.id,
-                                                 sealedManifest: sealed),
-                type: .roomKeyDelivery),
-              let recipientRadioKey = sender?.publicKey ?? Data(hexEncoded: invites.first(where: { $0.id == accept.inviteID })?.peerRadioKey ?? "")
+              let recipientRadioKey
         else { return }
 
-        if (try? await session.sendDirectText(text, to: recipientRadioKey)) != nil {
+        let delivery = FellshipEnvelope.RoomKeyDelivery(inviteID: accept.inviteID,
+                                                        roomID: room.id,
+                                                        sealedManifest: sealed)
+        if await sendDirectPayload(delivery, type: .roomKeyDelivery, to: recipientRadioKey) {
             noteMember(newMember, in: room.id)
-            setInviteState(accept.inviteID, to: .completed)
             invites.removeAll { $0.id == accept.inviteID }
             try? store.deleteInvite(accept.inviteID)
 
             // Tell the rest of the room about the newcomer.
             if let slot = channelSlot(for: room.id),
-               let announceText = try? FellshipEnvelope.sealRoomText(
-                    FellshipEnvelope.MemberAnnounce(member: newMember),
-                    type: .memberAnnounce, roomID: room.id, roomKey: key) {
+               let announceText = try? FellshipEnvelope.sealRoomPayload(
+                    .memberAnnounce(FellshipEnvelope.MemberAnnounce(member: newMember)),
+                    roomID: room.id, roomKey: key) {
                 _ = try? await session.sendChannelText(announceText, channelIndex: slot)
             }
         }
@@ -343,15 +387,35 @@ extension RoomEngine {
         } catch { return }
         rooms.append(manifest.room)
         var allMembers = manifest.members
-        if !allMembers.contains(where: { $0.id == myIdentityHex }) {
-            allMembers.append(Member(id: myIdentityHex, displayName: myDisplayName,
-                                     radioPublicKey: nil, joinedAt: Date()))
+        let me = Member(id: myIdentityHex, displayName: myDisplayName,
+                        radioPublicKey: nil, joinedAt: Date())
+        if !allMembers.contains(where: { $0.id == me.id }) {
+            allMembers.append(me)
         }
         for member in allMembers {
             try? store.saveMember(member, roomID: manifest.room.id)
         }
         membersCache[manifest.room.id] = allMembers
-        Task { await ensureChannel(for: manifest.room) }
+        Task {
+            await self.ensureChannel(for: manifest.room)
+            // Introduce myself on the room channel so other members learn my
+            // name and identity (essential after QR joins, where the inviter
+            // never announces me).
+            await self.announceSelf(in: manifest.room)
+        }
+    }
+
+    func announceSelf(in room: Room) async {
+        guard let session,
+              let key = CryptoService.roomKey(for: room.id),
+              let slot = channelSlot(for: room.id) else { return }
+        let me = Member(id: myIdentityHex, displayName: myDisplayName,
+                        radioPublicKey: nil, joinedAt: Date())
+        if let text = try? FellshipEnvelope.sealRoomPayload(
+                .memberAnnounce(FellshipEnvelope.MemberAnnounce(member: me)),
+                roomID: room.id, roomKey: key) {
+            _ = try? await session.sendChannelText(text, channelIndex: slot)
+        }
     }
 
     // MARK: - Public-room auto-invite (spec §3.3)
@@ -394,8 +458,13 @@ extension RoomEngine {
     /// exactly right for handing an invite to someone standing next to you.
     func makeQRPayload(room: Room) -> String? {
         guard let key = CryptoService.roomKey(for: room.id) else { return nil }
+        // Cap the embedded member list to keep the QR scannable; the rest of
+        // the roster arrives via presence and announces.
+        let members = ((try? store.members(roomID: room.id)) ?? [])
+            .sorted { $0.joinedAt > $1.joinedAt }
+            .prefix(12)
         let manifest = FellshipEnvelope.RoomManifest(room: room,
-                                                     members: (try? store.members(roomID: room.id)) ?? [],
+                                                     members: Array(members),
                                                      roomKeyData: key.dataRepresentation)
         guard let data = try? FellshipEnvelope.encodeManifest(manifest) else { return nil }
         return Self.qrPrefix + data.base64URLEncoded
@@ -432,4 +501,3 @@ extension RoomEngine {
         invites.removeAll { $0.roomID == DemoWorld.publicRoomID }
     }
 }
-

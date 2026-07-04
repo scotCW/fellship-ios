@@ -23,6 +23,7 @@ final class AppState: ObservableObject {
     private var transport: MeshTransport?
     private(set) var session: MeshSession?
     private var streamTasks: [Task<Void, Never>] = []
+    private var sessionEventTask: Task<Void, Never>?
     private var batteryTimer: Timer?
 
     init() {
@@ -96,6 +97,7 @@ final class AppState: ObservableObject {
             location.attach(session: session)
             location.setRadioConnected(true)
             settings.lastRadioIdentifier = settings.demoMode ? nil : radio.id
+            watchSessionEvents(session)
             deviceInfo = try? await session.queryDevice()
             batteryMilliVolts = try? await session.readBattery()
             startBatteryPolling()
@@ -110,8 +112,28 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Keeps the radio dashboard live (position refreshes, battery pushes).
+    private func watchSessionEvents(_ session: MeshSession) {
+        sessionEventTask?.cancel()
+        sessionEventTask = Task { [weak self] in
+            let stream = await session.events()
+            for await event in stream {
+                guard let self, !Task.isCancelled else { return }
+                switch event {
+                case .selfInfoUpdated(let info): self.selfInfo = info
+                case .batteryUpdated(let mv): self.batteryMilliVolts = mv
+                case .deviceInfoUpdated(let info): self.deviceInfo = info
+                default: break
+                }
+            }
+        }
+    }
+
     func disconnect() {
-        Task { await session?.stop() }
+        let closing = session
+        Task { await closing?.stop() }
+        sessionEventTask?.cancel()
+        sessionEventTask = nil
         session = nil
         transport?.disconnect()
         engine.detachSession()
@@ -138,7 +160,7 @@ final class AppState: ObservableObject {
         transport = newTransport
 
         streamTasks.append(Task { [weak self] in
-            for await state in newTransport.stateUpdates {
+            for await state in newTransport.states() {
                 guard let self else { return }
                 self.transportState = state
                 self.location.setRadioConnected(state.isConnected)
@@ -148,7 +170,7 @@ final class AppState: ObservableObject {
             }
         })
         streamTasks.append(Task { [weak self] in
-            for await list in newTransport.discoveredRadios {
+            for await list in newTransport.discovered() {
                 self?.radios = list
             }
         })

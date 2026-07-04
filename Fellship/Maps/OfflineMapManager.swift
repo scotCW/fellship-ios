@@ -95,7 +95,7 @@ final class OfflineMapManager: NSObject, ObservableObject {
 
     /// Rough size estimate before downloading, so users know what they're in
     /// for. Tile counts are exact; bytes use a typical-average per tile.
-    static func estimate(southWest: Coordinate, northEast: Coordinate,
+    nonisolated static func estimate(southWest: Coordinate, northEast: Coordinate,
                          fromZoom: Int, toZoom: Int) -> (tiles: Int, approxBytes: Int64) {
         var total = 0
         for z in fromZoom...max(fromZoom, toZoom) {
@@ -112,7 +112,7 @@ final class OfflineMapManager: NSObject, ObservableObject {
         return (total, Int64(total) * 35_000)
     }
 
-    private static func tileY(latitude: Double, n: Double) -> Int {
+    nonisolated private static func tileY(latitude: Double, n: Double) -> Int {
         let latRad = latitude * .pi / 180
         let clamped = min(max(latRad, -1.4844), 1.4844) // web-mercator limits
         return Int(floor((1 - log(tan(clamped) + 1 / cos(clamped)) / .pi) / 2 * n))

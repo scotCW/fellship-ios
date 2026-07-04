@@ -22,13 +22,16 @@ struct DiscoveredRadio: Identifiable, Equatable, Sendable {
 /// Abstraction over "a way to exchange MeshCore companion frames with a
 /// radio". Two implementations ship: CoreBluetooth against real hardware, and
 /// an in-memory simulator that powers demo mode, previews, and tests.
+///
+/// The stream factories return a **new independent stream per call** so that
+/// multiple consumers (session, UI, tests) can subscribe safely.
 protocol MeshTransport: AnyObject, Sendable {
     /// Complete companion-protocol frames received from the radio.
-    var incomingFrames: AsyncStream<Data> { get }
-    /// Connection state changes, starting with the current state.
-    var stateUpdates: AsyncStream<TransportState> { get }
+    func frames() -> AsyncStream<Data>
+    /// Connection state changes; the current state is replayed on subscribe.
+    func states() -> AsyncStream<TransportState>
     /// Radios visible right now (updated while scanning).
-    var discoveredRadios: AsyncStream<[DiscoveredRadio]> { get }
+    func discovered() -> AsyncStream<[DiscoveredRadio]>
 
     func startScanning()
     func stopScanning()

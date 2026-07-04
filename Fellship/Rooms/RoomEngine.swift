@@ -8,14 +8,16 @@ import CryptoKit
 final class RoomEngine: ObservableObject {
     // MARK: - Published state
 
-    @Published private(set) var rooms: [Room] = []
-    @Published private(set) var invites: [Invite] = []
+    // Setters are internal (not private) because RoomEngine+Mesh.swift in
+    // this module mutates them; views treat them as read-only.
+    @Published var rooms: [Room] = []
+    @Published var invites: [Invite] = []
     /// roomID → memberID → live presence.
-    @Published private(set) var presence: [String: [String: MemberPresence]] = [:]
+    @Published var presence: [String: [String: MemberPresence]] = [:]
     /// roomID → whether *my* device currently evaluates itself inside.
-    @Published private(set) var myInside: [String: Bool] = [:]
+    @Published var myInside: [String: Bool] = [:]
     /// Radio contacts heard recently (for Nearby + invites).
-    @Published private(set) var nearbyContacts: [MeshCore.Contact] = []
+    @Published var nearbyContacts: [MeshCore.Contact] = []
     /// Bumped whenever stored messages change, so chat views re-query.
     @Published var chatRevision = 0
 
@@ -339,16 +341,13 @@ final class RoomEngine: ObservableObject {
             case .rangeBased: inside = true // reachable = present
             }
 
-            let shareCoords = room.sharesPreciseLocation && fix != nil
             let presencePayload = FellshipEnvelope.Presence(
                 memberID: myIdentityHex,
-                name: myDisplayName,
                 isInside: inside,
-                latitude: shareCoords ? fix?.coordinate.latitude : nil,
-                longitude: shareCoords ? fix?.coordinate.longitude : nil,
+                coordinate: room.sharesPreciseLocation ? fix?.coordinate : nil,
                 sentAt: Date())
-            guard let text = try? FellshipEnvelope.sealRoomText(presencePayload, type: .presence,
-                                                                roomID: room.id, roomKey: key) else { continue }
+            guard let text = try? FellshipEnvelope.sealRoomPayload(.presence(presencePayload),
+                                                                   roomID: room.id, roomKey: key) else { continue }
             _ = try? await session.sendChannelText(text, channelIndex: slot)
         }
     }
@@ -358,11 +357,10 @@ final class RoomEngine: ObservableObject {
               let key = CryptoService.roomKey(for: room.id),
               let slot = channelSlots[room.id] else { return }
         let event = FellshipEnvelope.ZoneEvent(memberID: myIdentityHex,
-                                               name: myDisplayName,
                                                didEnter: didEnter,
                                                sentAt: Date())
-        if let text = try? FellshipEnvelope.sealRoomText(event, type: .zoneEvent,
-                                                         roomID: room.id, roomKey: key) {
+        if let text = try? FellshipEnvelope.sealRoomPayload(.zoneEvent(event),
+                                                            roomID: room.id, roomKey: key) {
             _ = try? await session.sendChannelText(text, channelIndex: slot)
         }
     }
@@ -386,7 +384,11 @@ final class RoomEngine: ObservableObject {
     // MARK: - Messaging (spec §5)
 
     func sendRoomMessage(_ room: Room, text: String, zoneOnly: Bool) async {
-        let messageID = UUID().uuidString
+        // 8 random bytes, hex — this exact ID travels on the wire so all
+        // members dedupe consistently.
+        var idBytes = Data(count: 8)
+        _ = idBytes.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 8, $0.baseAddress!) }
+        let messageID = idBytes.hexEncoded
         var message = RoomMessage(id: messageID,
                                   threadID: room.id,
                                   scope: zoneOnly ? .zone : .room,
@@ -406,17 +408,18 @@ final class RoomEngine: ObservableObject {
               let slot = channelSlots[room.id] else { return }
         let chat = FellshipEnvelope.Chat(messageID: messageID,
                                          memberID: myIdentityHex,
-                                         name: myDisplayName,
+                                         zoneScoped: zoneOnly,
                                          text: text,
                                          sentAt: Date())
-        guard let sealed = try? FellshipEnvelope.sealRoomText(chat, type: zoneOnly ? .zoneChat : .chat,
-                                                              roomID: room.id, roomKey: key) else { return }
-        if let result = try? await session.sendChannelText(sealed, channelIndex: slot) {
+        guard let sealed = try? FellshipEnvelope.sealRoomPayload(.chat(chat),
+                                                                 roomID: room.id, roomKey: key) else { return }
+        do {
+            let result = try await session.sendChannelText(sealed, channelIndex: slot)
             message.delivery = .sent
             if let result, result.expectedAckCRC != 0 {
                 pendingAcks[result.expectedAckCRC] = messageID
             }
-        } else {
+        } catch {
             message.delivery = .timedOut
         }
     }

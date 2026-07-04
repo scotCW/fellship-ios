@@ -80,60 +80,182 @@ final class CryptoAndEnvelopeTests: XCTestCase {
         }
     }
 
-    // MARK: - Envelope
+    // MARK: - Envelope (compact binary, spec §6 + LoRa payload budget)
 
-    func testRoomTextRoundTrip() throws {
+    /// A full member ID (identity key hex) and its expected 16-hex wire prefix.
+    let memberID = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
+
+    func testPresenceRoundTrip() throws {
         let key = CryptoService.generateRoomKey()
-        let presence = FellshipEnvelope.Presence(memberID: "m1", name: "Robin",
+        let presence = FellshipEnvelope.Presence(memberID: memberID,
                                                  isInside: true,
-                                                 latitude: 37.7, longitude: -122.4,
+                                                 coordinate: Coordinate(latitude: 37.7, longitude: -122.4),
                                                  sentAt: Date())
-        let text = try FellshipEnvelope.sealRoomText(presence, type: .presence,
-                                                     roomID: roomID, roomKey: key)
+        let text = try FellshipEnvelope.sealRoomPayload(.presence(presence),
+                                                        roomID: roomID, roomKey: key)
         XCTAssertTrue(text.hasPrefix("~F1~"))
         XCTAssertEqual(FellshipEnvelope.roomIDPrefix(fromText: text), String(roomID.prefix(16)))
 
-        let (type, body) = try FellshipEnvelope.openRoomText(text, roomID: roomID, roomKey: key)
-        XCTAssertEqual(type, .presence)
-        let decoded = try FellshipEnvelope.decodeBody(FellshipEnvelope.Presence.self, from: body)
-        XCTAssertEqual(decoded.memberID, "m1")
-        XCTAssertEqual(decoded.latitude ?? 0, 37.7, accuracy: 0.0001)
+        guard case .presence(let decoded) = try FellshipEnvelope.openRoomPayload(text, roomID: roomID, roomKey: key) else {
+            return XCTFail("expected presence")
+        }
+        XCTAssertEqual(decoded.memberID, String(memberID.prefix(16)))
+        XCTAssertTrue(memberID.hasPrefix(decoded.memberID), "wire prefix must resolve to the full ID")
+        XCTAssertEqual(decoded.coordinate?.latitude ?? 0, 37.7, accuracy: 0.00001)
         XCTAssertTrue(decoded.isInside)
     }
 
     func testPresenceWithoutCoordinatesOmitsThem() throws {
-        let presence = FellshipEnvelope.Presence(memberID: "m1", name: "Robin",
-                                                 isInside: true,
-                                                 latitude: nil, longitude: nil,
-                                                 sentAt: Date())
-        XCTAssertNil(presence.coordinate)
         let key = CryptoService.generateRoomKey()
-        let text = try FellshipEnvelope.sealRoomText(presence, type: .presence,
-                                                     roomID: roomID, roomKey: key)
-        let (_, body) = try FellshipEnvelope.openRoomText(text, roomID: roomID, roomKey: key)
-        let decoded = try FellshipEnvelope.decodeBody(FellshipEnvelope.Presence.self, from: body)
+        let presence = FellshipEnvelope.Presence(memberID: memberID, isInside: false,
+                                                 coordinate: nil, sentAt: Date())
+        let text = try FellshipEnvelope.sealRoomPayload(.presence(presence),
+                                                        roomID: roomID, roomKey: key)
+        guard case .presence(let decoded) = try FellshipEnvelope.openRoomPayload(text, roomID: roomID, roomKey: key) else {
+            return XCTFail("expected presence")
+        }
         XCTAssertNil(decoded.coordinate)
+        XCTAssertFalse(decoded.isInside)
     }
 
-    func testDirectTextRoundTrip() throws {
+    func testChatAndZoneEventRoundTrip() throws {
+        let key = CryptoService.generateRoomKey()
+        let chat = FellshipEnvelope.Chat(messageID: "0102030405060708",
+                                         memberID: memberID,
+                                         zoneScoped: true,
+                                         text: "Meet at the col",
+                                         sentAt: Date())
+        let chatText = try FellshipEnvelope.sealRoomPayload(.chat(chat), roomID: roomID, roomKey: key)
+        guard case .chat(let decodedChat) = try FellshipEnvelope.openRoomPayload(chatText, roomID: roomID, roomKey: key) else {
+            return XCTFail("expected chat")
+        }
+        XCTAssertEqual(decodedChat.messageID, "0102030405060708")
+        XCTAssertTrue(decodedChat.zoneScoped)
+        XCTAssertEqual(decodedChat.text, "Meet at the col")
+
+        let event = FellshipEnvelope.ZoneEvent(memberID: memberID, didEnter: true, sentAt: Date())
+        let eventText = try FellshipEnvelope.sealRoomPayload(.zoneEvent(event), roomID: roomID, roomKey: key)
+        guard case .zoneEvent(let decodedEvent) = try FellshipEnvelope.openRoomPayload(eventText, roomID: roomID, roomKey: key) else {
+            return XCTFail("expected zoneEvent")
+        }
+        XCTAssertTrue(decodedEvent.didEnter)
+    }
+
+    func testMemberAnnounceRoundTrip() throws {
+        let key = CryptoService.generateRoomKey()
+        let member = Member(id: memberID, displayName: "Robin",
+                            radioPublicKey: String(repeating: "ab", count: 32),
+                            joinedAt: Date())
+        let text = try FellshipEnvelope.sealRoomPayload(
+            .memberAnnounce(FellshipEnvelope.MemberAnnounce(member: member)),
+            roomID: roomID, roomKey: key)
+        guard case .memberAnnounce(let decoded) = try FellshipEnvelope.openRoomPayload(text, roomID: roomID, roomKey: key) else {
+            return XCTFail("expected announce")
+        }
+        XCTAssertEqual(decoded.member.id, memberID)
+        XCTAssertEqual(decoded.member.displayName, "Robin")
+        XCTAssertEqual(decoded.member.radioPublicKey, String(repeating: "ab", count: 32))
+    }
+
+    /// The hard constraint that shaped the wire format: room traffic must fit
+    /// a single stock MeshCore text frame (~160 bytes usable).
+    func testRoomPayloadsFitLoRaTextBudget() throws {
+        let key = CryptoService.generateRoomKey()
+        let presence = FellshipEnvelope.Presence(memberID: memberID, isInside: true,
+                                                 coordinate: Coordinate(latitude: -37.5, longitude: 145.2),
+                                                 sentAt: Date())
+        let presenceText = try FellshipEnvelope.sealRoomPayload(.presence(presence),
+                                                                roomID: roomID, roomKey: key)
+        XCTAssertLessThanOrEqual(presenceText.utf8.count, 110,
+                                 "presence must leave generous headroom")
+
+        let zoneText = try FellshipEnvelope.sealRoomPayload(
+            .zoneEvent(FellshipEnvelope.ZoneEvent(memberID: memberID, didEnter: false, sentAt: Date())),
+            roomID: roomID, roomKey: key)
+        XCTAssertLessThanOrEqual(zoneText.utf8.count, 100)
+
+        let chat60 = FellshipEnvelope.Chat(messageID: "0102030405060708", memberID: memberID,
+                                           zoneScoped: false,
+                                           text: String(repeating: "x", count: 60),
+                                           sentAt: Date())
+        let chatText = try FellshipEnvelope.sealRoomPayload(.chat(chat60), roomID: roomID, roomKey: key)
+        XCTAssertLessThanOrEqual(chatText.utf8.count, 160,
+                                 "a 60-char chat message must fit one LoRa text frame")
+
+        // Every direct chunk must fit too.
+        let delivery = FellshipEnvelope.RoomKeyDelivery(inviteID: UUID().uuidString,
+                                                        roomID: roomID,
+                                                        sealedManifest: Data(repeating: 7, count: 900))
+        let chunks = try FellshipEnvelope.directChunks(delivery, type: .roomKeyDelivery)
+        XCTAssertGreaterThan(chunks.count, 1)
+        for chunk in chunks {
+            XCTAssertLessThanOrEqual(chunk.utf8.count, 150, "chunk exceeds LoRa text budget")
+        }
+    }
+
+    func testDirectChunkReassemblyInOrder() throws {
         let offer = FellshipEnvelope.InviteOffer(inviteID: "i1", roomID: roomID,
-                                                 roomName: "Cabin", roomKind: .geofenced,
+                                                 roomName: "Cabin Weekend Crew",
+                                                 roomKind: .geofenced,
                                                  access: .inviteOnly,
-                                                 inviterIdentityKey: "aa",
+                                                 inviterIdentityKey: memberID,
                                                  inviterName: "Ash", isAutomatic: false)
-        let text = try FellshipEnvelope.sealDirectText(offer, type: .inviteOffer)
-        let (type, body) = try FellshipEnvelope.openDirectText(text)
+        let chunks = try FellshipEnvelope.directChunks(offer, type: .inviteOffer)
+        let assembler = FellshipEnvelope.DirectAssembler()
+        var result: (type: FellshipEnvelope.PayloadType, body: Data)?
+        for chunk in chunks {
+            result = assembler.ingest(senderHex: "peer1", text: chunk)
+        }
+        let (type, body) = try XCTUnwrap(result)
         XCTAssertEqual(type, .inviteOffer)
-        let decoded = try FellshipEnvelope.decodeBody(FellshipEnvelope.InviteOffer.self, from: body)
-        XCTAssertEqual(decoded.roomName, "Cabin")
+        let decoded = try FellshipEnvelope.decodeDirectPayload(FellshipEnvelope.InviteOffer.self, from: body)
+        XCTAssertEqual(decoded, offer)
+    }
+
+    func testDirectChunkReassemblyOutOfOrderAndInterleaved() throws {
+        let accept = FellshipEnvelope.InviteAccept(inviteID: "i2", roomID: roomID,
+                                                   inviteeIdentityKey: memberID,
+                                                   inviteeName: "A fairly long display name")
+        let chunksA = try FellshipEnvelope.directChunks(accept, type: .inviteAccept, chunkDataSize: 24)
+        XCTAssertGreaterThan(chunksA.count, 2)
+
+        let other = FellshipEnvelope.InviteAccept(inviteID: "i3", roomID: roomID,
+                                                  inviteeIdentityKey: memberID,
+                                                  inviteeName: "Someone else")
+        let chunksB = try FellshipEnvelope.directChunks(other, type: .inviteAccept, chunkDataSize: 24)
+
+        let assembler = FellshipEnvelope.DirectAssembler()
+        // Interleave two senders and shuffle order within each.
+        var result1: (type: FellshipEnvelope.PayloadType, body: Data)?
+        var result2: (type: FellshipEnvelope.PayloadType, body: Data)?
+        for chunk in chunksA.reversed() {
+            result1 = assembler.ingest(senderHex: "peer1", text: chunk) ?? result1
+        }
+        for chunk in chunksB.shuffled() {
+            result2 = assembler.ingest(senderHex: "peer2", text: chunk) ?? result2
+        }
+        let decoded1 = try FellshipEnvelope.decodeDirectPayload(
+            FellshipEnvelope.InviteAccept.self, from: try XCTUnwrap(result1).body)
+        XCTAssertEqual(decoded1, accept)
+        let decoded2 = try FellshipEnvelope.decodeDirectPayload(
+            FellshipEnvelope.InviteAccept.self, from: try XCTUnwrap(result2).body)
+        XCTAssertEqual(decoded2, other)
+    }
+
+    func testAssemblerIgnoresGarbageAndPlainText() {
+        let assembler = FellshipEnvelope.DirectAssembler()
+        XCTAssertNil(assembler.ingest(senderHex: "p", text: "just a normal message"))
+        XCTAssertNil(assembler.ingest(senderHex: "p", text: "~F2~notbase64!!!"))
+        XCTAssertNil(assembler.ingest(senderHex: "p", text: "~F2~AAAA")) // too short
     }
 
     func testNonEnvelopeTextIsRejected() {
         XCTAssertNil(FellshipEnvelope.roomIDPrefix(fromText: "hello there"))
         XCTAssertNil(FellshipEnvelope.roomIDPrefix(fromText: "~F1~%%%not-base64%%%"))
-        XCTAssertThrowsError(try FellshipEnvelope.openDirectText("plain message"))
         let key = CryptoService.generateRoomKey()
-        XCTAssertThrowsError(try FellshipEnvelope.openRoomText("garbage", roomID: roomID, roomKey: key))
+        XCTAssertThrowsError(try FellshipEnvelope.openRoomPayload("garbage", roomID: roomID, roomKey: key))
+        XCTAssertThrowsError(try FellshipEnvelope.openRoomPayload("~F1~AAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                                                                  roomID: roomID, roomKey: key))
     }
 
     func testManifestRoundTripPreservesRoomAndKey() throws {

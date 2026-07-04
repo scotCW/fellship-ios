@@ -6,61 +6,81 @@ import CryptoKit
 /// touches the mesh, independent of whatever encryption MeshCore's transport
 /// applies (spec §6).
 ///
-/// Room traffic rides the room's MeshCore channel as a text message:
-///     "~F1~" + base64url( roomIDPrefix(8) || sealedBox )
-/// where sealedBox = ChaChaPoly(roomKey, AAD: full room ID) over a plaintext
-/// `Payload`. Invite traffic rides direct messages with the same framing but
-/// its own payload types; the room key itself only ever travels inside a
-/// Curve25519 sealed box addressed to the invitee.
+/// LoRa is tiny: a MeshCore text payload tops out around 160 bytes, so room
+/// traffic uses hand-packed binary bodies, not JSON:
+///
+///     channel text = "~F1~" + base64url( roomIDPrefix(8) || ChaChaPoly box )
+///
+/// Direct-message payloads (the invite handshake) are JSON for flexibility
+/// but split into chunks that each fit a LoRa frame:
+///
+///     dm text = "~F2~" + base64url( msgID(4) || index(1) || count(1) || data )
+///
+/// The room key itself only ever travels inside a Curve25519 sealed box
+/// addressed to the invitee (or via QR, face to face).
 enum FellshipEnvelope {
-    static let textPrefix = "~F1~"
+    static let roomPrefix = "~F1~"
+    static let directPrefix = "~F2~"
 
     enum PayloadType: UInt8 {
         case presence = 1
         case chat = 2
-        case zoneChat = 3
         case zoneEvent = 4
+        case memberAnnounce = 5
         case inviteOffer = 16
         case inviteAccept = 17
         case roomKeyDelivery = 18
-        case memberAnnounce = 19
     }
 
-    // MARK: - Payload bodies
+    enum EnvelopeError: Error {
+        case malformed
+        case unknownType
+        case tooManyChunks
+    }
+
+    // MARK: - Payload models
 
     /// Periodic presence beacon inside a room. Coordinates are included only
-    /// when the room's visibility setting allows — enforced here at the
-    /// broadcast level, not in the UI (spec §3.4).
-    struct Presence: Codable, Equatable {
+    /// when the room's visibility setting allows — enforced at the broadcast
+    /// level, not in the UI (spec §3.4). `memberID` on the wire is an 8-byte
+    /// identity-key prefix (hex); receivers resolve it against membership.
+    struct Presence: Equatable {
         var memberID: String
-        var name: String
         var isInside: Bool
-        var latitude: Double?
-        var longitude: Double?
+        var coordinate: Coordinate?
         var sentAt: Date
-
-        var coordinate: Coordinate? {
-            guard let latitude, let longitude else { return nil }
-            return Coordinate(latitude: latitude, longitude: longitude)
-        }
     }
 
-    struct Chat: Codable, Equatable {
-        var messageID: String
+    struct Chat: Equatable {
+        var messageID: String   // 8 random bytes, hex
         var memberID: String
-        var name: String
+        var zoneScoped: Bool
         var text: String
         var sentAt: Date
     }
 
     /// "I crossed the boundary" — every device evaluates its own GPS against
     /// the shared boundary and announces transitions (spec §3.1).
-    struct ZoneEvent: Codable, Equatable {
+    struct ZoneEvent: Equatable {
         var memberID: String
-        var name: String
         var didEnter: Bool
         var sentAt: Date
     }
+
+    /// Announces a member (with full identity key + name) on the room
+    /// channel, so presence prefixes resolve to names.
+    struct MemberAnnounce: Equatable {
+        var member: Member
+    }
+
+    enum RoomPayload: Equatable {
+        case presence(Presence)
+        case chat(Chat)
+        case zoneEvent(ZoneEvent)
+        case memberAnnounce(MemberAnnounce)
+    }
+
+    // Invite handshake payloads (JSON over chunked DMs).
 
     struct InviteOffer: Codable, Equatable {
         var inviteID: String
@@ -84,7 +104,6 @@ enum FellshipEnvelope {
     struct RoomKeyDelivery: Codable, Equatable {
         var inviteID: String
         var roomID: String
-        /// Curve25519 sealed box over `RoomManifest` JSON.
         var sealedManifest: Data
     }
 
@@ -95,96 +114,242 @@ enum FellshipEnvelope {
         var roomKeyData: Data
     }
 
-    /// Announces a new member to the rest of the room (sent on the room
-    /// channel by the inviter after key delivery).
-    struct MemberAnnounce: Codable, Equatable {
-        var member: Member
+    // MARK: - Member ID prefix helpers
+
+    /// 8-byte identity prefix used on the wire (16 hex chars).
+    static func wirePrefix(ofMemberID id: String) -> Data {
+        if let data = Data(hexEncoded: id), data.count >= 8 {
+            return data.prefix(8)
+        }
+        // Defensive: derive a stable prefix from whatever the ID is.
+        return Data(SHA256.hash(data: Data(id.utf8))).prefix(8)
     }
 
-    // MARK: - Encoding
+    // MARK: - Room payload binary codec
 
-    private static let encoder: JSONEncoder = {
+    private static func encodeBody(_ payload: RoomPayload) -> Data {
+        var w = BinaryWriter()
+        switch payload {
+        case .presence(let p):
+            w.writeUInt8(PayloadType.presence.rawValue)
+            var flags: UInt8 = p.isInside ? 0b01 : 0
+            if p.coordinate != nil { flags |= 0b10 }
+            w.writeUInt8(flags)
+            w.writeBytes(wirePrefix(ofMemberID: p.memberID))
+            w.writeUInt32(UInt32(clamping: Int(p.sentAt.timeIntervalSince1970)))
+            if let coordinate = p.coordinate {
+                w.writeInt32(coordinate.microdegreesLat)
+                w.writeInt32(coordinate.microdegreesLon)
+            }
+        case .chat(let c):
+            w.writeUInt8(PayloadType.chat.rawValue)
+            w.writeUInt8(c.zoneScoped ? 1 : 0)
+            w.writeBytes((Data(hexEncoded: c.messageID) ?? Data(count: 8)).prefix(8))
+            w.writeBytes(wirePrefix(ofMemberID: c.memberID))
+            w.writeUInt32(UInt32(clamping: Int(c.sentAt.timeIntervalSince1970)))
+            w.writeString(c.text)
+        case .zoneEvent(let e):
+            w.writeUInt8(PayloadType.zoneEvent.rawValue)
+            w.writeUInt8(e.didEnter ? 1 : 0)
+            w.writeBytes(wirePrefix(ofMemberID: e.memberID))
+            w.writeUInt32(UInt32(clamping: Int(e.sentAt.timeIntervalSince1970)))
+        case .memberAnnounce(let a):
+            w.writeUInt8(PayloadType.memberAnnounce.rawValue)
+            let identity = Data(hexEncoded: a.member.id) ?? Data(count: 32)
+            w.writeBytes(identity.prefix(32) + Data(count: max(0, 32 - identity.count)))
+            let radio = a.member.radioPublicKey.flatMap { Data(hexEncoded: $0) }
+            w.writeUInt8(radio != nil ? 1 : 0)
+            if let radio {
+                w.writeBytes(radio.prefix(32) + Data(count: max(0, 32 - radio.count)))
+            }
+            w.writeString(String(a.member.displayName.prefix(24)))
+        }
+        return w.data
+    }
+
+    private static func decodeBody(_ data: Data) throws -> RoomPayload {
+        var r = BinaryReader(data)
+        guard let type = PayloadType(rawValue: try r.readUInt8()) else {
+            throw EnvelopeError.unknownType
+        }
+        switch type {
+        case .presence:
+            let flags = try r.readUInt8()
+            let member = try r.readBytes(8).hexEncoded
+            let ts = Date(timeIntervalSince1970: TimeInterval(try r.readUInt32()))
+            var coordinate: Coordinate?
+            if flags & 0b10 != 0 {
+                coordinate = Coordinate(microdegreesLat: try r.readInt32(),
+                                        microdegreesLon: try r.readInt32())
+            }
+            return .presence(Presence(memberID: member, isInside: flags & 0b01 != 0,
+                                      coordinate: coordinate, sentAt: ts))
+        case .chat:
+            let flags = try r.readUInt8()
+            let messageID = try r.readBytes(8).hexEncoded
+            let member = try r.readBytes(8).hexEncoded
+            let ts = Date(timeIntervalSince1970: TimeInterval(try r.readUInt32()))
+            let text = r.readStringToEnd()
+            return .chat(Chat(messageID: messageID, memberID: member,
+                              zoneScoped: flags & 1 != 0, text: text, sentAt: ts))
+        case .zoneEvent:
+            let flags = try r.readUInt8()
+            let member = try r.readBytes(8).hexEncoded
+            let ts = Date(timeIntervalSince1970: TimeInterval(try r.readUInt32()))
+            return .zoneEvent(ZoneEvent(memberID: member, didEnter: flags & 1 != 0, sentAt: ts))
+        case .memberAnnounce:
+            let identity = try r.readBytes(32).hexEncoded
+            let hasRadio = try r.readUInt8() == 1
+            let radio = hasRadio ? try r.readBytes(32).hexEncoded : nil
+            let name = r.readStringToEnd()
+            return .memberAnnounce(MemberAnnounce(member: Member(
+                id: identity,
+                displayName: name.isEmpty ? "Member \(identity.prefix(6))" : name,
+                radioPublicKey: radio,
+                joinedAt: Date())))
+        default:
+            throw EnvelopeError.unknownType
+        }
+    }
+
+    /// Builds the channel text for an encrypted room payload.
+    static func sealRoomPayload(_ payload: RoomPayload, roomID: String,
+                                roomKey: SymmetricKey) throws -> String {
+        let body = encodeBody(payload)
+        let sealed = try CryptoService.seal(body, roomKey: roomKey, roomID: roomID)
+        guard let prefix = Data(hexEncoded: String(roomID.prefix(16))) else {
+            throw EnvelopeError.malformed
+        }
+        return roomPrefix + (prefix + sealed).base64URLEncoded
+    }
+
+    /// Extracts the 8-byte room ID prefix from received channel text, so the
+    /// receiver knows which room key to try. Returns nil for non-Fellship text.
+    static func roomIDPrefix(fromText text: String) -> String? {
+        guard text.hasPrefix(roomPrefix),
+              let raw = Data(base64URLEncoded: String(text.dropFirst(roomPrefix.count))),
+              raw.count > 8 else { return nil }
+        return raw.prefix(8).hexEncoded
+    }
+
+    static func openRoomPayload(_ text: String, roomID: String,
+                                roomKey: SymmetricKey) throws -> RoomPayload {
+        guard text.hasPrefix(roomPrefix),
+              let raw = Data(base64URLEncoded: String(text.dropFirst(roomPrefix.count))),
+              raw.count > 8 else {
+            throw EnvelopeError.malformed
+        }
+        let body = try CryptoService.open(Data(raw.dropFirst(8)), roomKey: roomKey, roomID: roomID)
+        return try decodeBody(body)
+    }
+
+    // MARK: - Direct-message chunked payloads (invite handshake)
+
+    private static let jsonEncoder: JSONEncoder = {
         let e = JSONEncoder()
         e.dateEncodingStrategy = .secondsSince1970
         e.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return e
     }()
 
-    private static let decoder: JSONDecoder = {
+    private static let jsonDecoder: JSONDecoder = {
         let d = JSONDecoder()
         d.dateDecodingStrategy = .secondsSince1970
         return d
     }()
 
-    /// Builds the channel text for an encrypted room payload.
-    static func sealRoomText<T: Encodable>(_ payload: T, type: PayloadType,
-                                           roomID: String, roomKey: SymmetricKey) throws -> String {
-        var plaintext = Data([type.rawValue])
-        plaintext.append(try encoder.encode(payload))
-        let sealed = try CryptoService.seal(plaintext, roomKey: roomKey, roomID: roomID)
-        guard let prefix = Data(hexEncoded: String(roomID.prefix(16))) else {
-            throw CryptoService.CryptoError.malformedPayload
+    /// Splits a payload into DM-sized texts. Each chunk's base64 stays under
+    /// ~140 characters so it fits a stock MeshCore text frame.
+    static func directChunks<T: Encodable>(_ payload: T, type: PayloadType,
+                                           chunkDataSize: Int = 96) throws -> [String] {
+        var full = Data([type.rawValue])
+        full.append(try jsonEncoder.encode(payload))
+        let msgID = UInt32.random(in: 1..<UInt32.max)
+        let pieces = stride(from: 0, to: full.count, by: chunkDataSize).map {
+            full.subdata(in: $0..<min($0 + chunkDataSize, full.count))
         }
-        return textPrefix + (prefix + sealed).base64URLEncoded
-    }
-
-    /// Extracts the 8-byte room ID prefix from received channel text, so the
-    /// receiver knows which room key to try. Returns nil for non-Fellship text.
-    static func roomIDPrefix(fromText text: String) -> String? {
-        guard text.hasPrefix(textPrefix),
-              let raw = Data(base64URLEncoded: String(text.dropFirst(textPrefix.count))),
-              raw.count > 8 else { return nil }
-        return raw.prefix(8).hexEncoded
-    }
-
-    /// Decrypts and decodes a room payload. The caller resolves the room key
-    /// from the prefix returned by `roomIDPrefix(fromText:)`.
-    static func openRoomText(_ text: String, roomID: String,
-                             roomKey: SymmetricKey) throws -> (type: PayloadType, body: Data) {
-        guard text.hasPrefix(textPrefix),
-              let raw = Data(base64URLEncoded: String(text.dropFirst(textPrefix.count))),
-              raw.count > 8 else {
-            throw CryptoService.CryptoError.malformedPayload
+        guard pieces.count <= 255 else { throw EnvelopeError.tooManyChunks }
+        return pieces.enumerated().map { index, piece in
+            var w = BinaryWriter()
+            w.writeUInt32(msgID)
+            w.writeUInt8(UInt8(index))
+            w.writeUInt8(UInt8(pieces.count))
+            w.writeBytes(piece)
+            return directPrefix + w.data.base64URLEncoded
         }
-        let sealed = raw.dropFirst(8)
-        let plaintext = try CryptoService.open(Data(sealed), roomKey: roomKey, roomID: roomID)
-        guard let first = plaintext.first, let type = PayloadType(rawValue: first) else {
-            throw CryptoService.CryptoError.malformedPayload
-        }
-        return (type, Data(plaintext.dropFirst()))
     }
 
-    static func decodeBody<T: Decodable>(_ type: T.Type, from body: Data) throws -> T {
-        try decoder.decode(type, from: body)
+    static func isDirectEnvelope(_ text: String) -> Bool {
+        text.hasPrefix(directPrefix)
     }
 
-    // MARK: - Direct-message envelopes (invites)
-
-    /// Direct-message payloads are not room-key encrypted (the recipient may
-    /// not have the room yet); sensitive material inside them (the room key)
-    /// is sealed to the recipient's identity key. MeshCore's own
-    /// contact-to-contact encryption covers the outer layer in transit.
-    static func sealDirectText<T: Encodable>(_ payload: T, type: PayloadType) throws -> String {
-        var plaintext = Data([type.rawValue])
-        plaintext.append(try encoder.encode(payload))
-        return textPrefix + plaintext.base64URLEncoded
-    }
-
-    static func openDirectText(_ text: String) throws -> (type: PayloadType, body: Data) {
-        guard text.hasPrefix(textPrefix),
-              let raw = Data(base64URLEncoded: String(text.dropFirst(textPrefix.count))),
-              let first = raw.first, let type = PayloadType(rawValue: first) else {
-            throw CryptoService.CryptoError.malformedPayload
-        }
-        return (type, Data(raw.dropFirst()))
+    static func decodeDirectPayload<T: Decodable>(_ type: T.Type, from body: Data) throws -> T {
+        try jsonDecoder.decode(type, from: body)
     }
 
     static func encodeManifest(_ manifest: RoomManifest) throws -> Data {
-        try encoder.encode(manifest)
+        try jsonEncoder.encode(manifest)
     }
 
     static func decodeManifest(_ data: Data) throws -> RoomManifest {
-        try decoder.decode(RoomManifest.self, from: data)
+        try jsonDecoder.decode(RoomManifest.self, from: data)
+    }
+
+    /// Reassembles chunked direct payloads per sender. Partial messages are
+    /// dropped after `timeout` so lost LoRa frames can't leak memory.
+    final class DirectAssembler {
+        private struct Partial {
+            var chunks: [UInt8: Data] = [:]
+            var count: UInt8
+            var startedAt = Date()
+        }
+
+        private var partials: [String: Partial] = [:] // "senderHex|msgID"
+        private let timeout: TimeInterval
+
+        init(timeout: TimeInterval = 300) {
+            self.timeout = timeout
+        }
+
+        /// Feed one DM text; returns the completed (type, body) when the last
+        /// chunk arrives, nil otherwise. Not a Fellship envelope → nil.
+        func ingest(senderHex: String, text: String) -> (type: PayloadType, body: Data)? {
+            guard text.hasPrefix(FellshipEnvelope.directPrefix),
+                  let raw = Data(base64URLEncoded: String(text.dropFirst(FellshipEnvelope.directPrefix.count))),
+                  raw.count > 6 else { return nil }
+            var r = BinaryReader(raw)
+            guard let msgID = try? r.readUInt32(),
+                  let index = try? r.readUInt8(),
+                  let count = try? r.readUInt8(),
+                  count > 0, index < count else { return nil }
+            let data = Data(raw.dropFirst(6))
+
+            sweep()
+            let key = "\(senderHex)|\(msgID)"
+            var partial = partials[key] ?? Partial(count: count)
+            guard partial.count == count else {
+                partials[key] = nil
+                return nil
+            }
+            partial.chunks[index] = data
+            guard partial.chunks.count == Int(count) else {
+                partials[key] = partial
+                return nil
+            }
+            partials[key] = nil
+            var full = Data()
+            for i in 0..<count {
+                guard let piece = partial.chunks[i] else { return nil }
+                full.append(piece)
+            }
+            guard let first = full.first, let type = PayloadType(rawValue: first) else { return nil }
+            return (type, Data(full.dropFirst()))
+        }
+
+        private func sweep() {
+            let cutoff = Date().addingTimeInterval(-timeout)
+            partials = partials.filter { $0.value.startedAt > cutoff }
+        }
     }
 }
 

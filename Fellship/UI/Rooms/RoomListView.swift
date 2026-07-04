@@ -168,6 +168,12 @@ struct InviteAcceptSheet: View {
     @Environment(\.dismiss) private var dismiss
     let invite: Invite
 
+    /// The captured invite goes stale once the engine updates it (e.g. to
+    /// `.accepted`) — always render the live copy.
+    private var liveInvite: Invite {
+        engine.invites.first { $0.id == invite.id } ?? invite
+    }
+
     var body: some View {
         VStack(spacing: 20) {
             Image(systemName: invite.roomKind.systemImage)
@@ -186,14 +192,14 @@ struct InviteAcceptSheet: View {
             .multilineTextAlignment(.center)
             .padding(.horizontal, 24)
 
-            if invite.state == .accepted {
+            if liveInvite.state == .accepted {
                 ProgressView("Waiting for the room key over the mesh…")
                     .padding(.top, 4)
             }
 
             HStack(spacing: 12) {
                 Button(role: .cancel) {
-                    engine.declineInvite(invite)
+                    engine.declineInvite(liveInvite)
                     dismiss()
                 } label: {
                     Text("Decline").frame(maxWidth: .infinity)
@@ -201,13 +207,13 @@ struct InviteAcceptSheet: View {
                 .buttonStyle(.bordered)
 
                 Button {
-                    Task { await engine.acceptInvite(invite) }
+                    Task { await engine.acceptInvite(liveInvite) }
                 } label: {
-                    Text(invite.state == .accepted ? "Accepted" : "Accept & join")
+                    Text(liveInvite.state == .accepted ? "Accepted" : "Accept & join")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(invite.state == .accepted)
+                .disabled(liveInvite.state == .accepted)
             }
             .padding(.horizontal, 20)
             Spacer()

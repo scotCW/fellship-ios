@@ -12,45 +12,37 @@ final class BLETransport: NSObject, MeshTransport, @unchecked Sendable {
     private var peripheral: CBPeripheral?
     private var rxCharacteristic: CBCharacteristic?
 
-    private var frameContinuation: AsyncStream<Data>.Continuation!
-    private var stateContinuation: AsyncStream<TransportState>.Continuation!
-    private var radiosContinuation: AsyncStream<[DiscoveredRadio]>.Continuation!
-
-    let incomingFrames: AsyncStream<Data>
-    let stateUpdates: AsyncStream<TransportState>
-    let discoveredRadios: AsyncStream<[DiscoveredRadio]>
+    private let frameCaster = StreamMulticaster<Data>()
+    private let stateCaster = StreamMulticaster<TransportState>(replayLast: true)
+    private let radiosCaster = StreamMulticaster<[DiscoveredRadio]>(replayLast: true)
 
     private var currentState: TransportState = .disconnected {
-        didSet { stateContinuation.yield(currentState) }
+        didSet { stateCaster.yield(currentState) }
     }
     private var found: [String: (peripheral: CBPeripheral, rssi: Int)] = [:]
     private var connectContinuation: CheckedContinuation<Void, Error>?
     private var pendingWrites: [(Data, CheckedContinuation<Void, Error>)] = []
     private var writeInFlight = false
     private var shouldScanWhenPoweredOn = false
+    private static let connectTimeout: TimeInterval = 15
 
     override init() {
-        var frameCont: AsyncStream<Data>.Continuation!
-        incomingFrames = AsyncStream(bufferingPolicy: .bufferingNewest(256)) { frameCont = $0 }
-        var stateCont: AsyncStream<TransportState>.Continuation!
-        stateUpdates = AsyncStream(bufferingPolicy: .bufferingNewest(8)) { stateCont = $0 }
-        var radiosCont: AsyncStream<[DiscoveredRadio]>.Continuation!
-        discoveredRadios = AsyncStream(bufferingPolicy: .bufferingNewest(8)) { radiosCont = $0 }
         super.init()
-        frameContinuation = frameCont
-        stateContinuation = stateCont
-        radiosContinuation = radiosCont
         central = CBCentralManager(delegate: self, queue: queue,
                                    options: [CBCentralManagerOptionShowPowerAlertKey: true])
-        stateContinuation.yield(.disconnected)
+        stateCaster.yield(.disconnected)
     }
 
     // MARK: - MeshTransport
 
+    func frames() -> AsyncStream<Data> { frameCaster.stream(bufferingNewest: 256) }
+    func states() -> AsyncStream<TransportState> { stateCaster.stream(bufferingNewest: 8) }
+    func discovered() -> AsyncStream<[DiscoveredRadio]> { radiosCaster.stream(bufferingNewest: 8) }
+
     func startScanning() {
         queue.async { [self] in
             found.removeAll()
-            radiosContinuation.yield([])
+            radiosCaster.yield([])
             guard central.state == .poweredOn else {
                 shouldScanWhenPoweredOn = true
                 return
@@ -88,6 +80,11 @@ final class BLETransport: NSObject, MeshTransport, @unchecked Sendable {
                 target.delegate = self
                 currentState = .connecting
                 central.connect(target, options: nil)
+                // CoreBluetooth never times out connects on its own.
+                queue.asyncAfter(deadline: .now() + Self.connectTimeout) { [weak self] in
+                    guard let self, self.connectContinuation != nil else { return }
+                    self.connectFailed("The radio didn't respond. Make sure it's powered on and in range.")
+                }
             }
         }
     }
@@ -175,7 +172,7 @@ extension BLETransport: CBCentralManagerDelegate {
         found[peripheral.identifier.uuidString] = (peripheral, RSSI.intValue)
         let radios = found.map { DiscoveredRadio(id: $0.key, name: $0.value.peripheral.name ?? name, rssi: $0.value.rssi) }
             .sorted { $0.rssi > $1.rssi }
-        radiosContinuation.yield(radios)
+        radiosCaster.yield(radios)
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
@@ -232,7 +229,7 @@ extension BLETransport: CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard error == nil, let value = characteristic.value, !value.isEmpty else { return }
-        frameContinuation.yield(value)
+        frameCaster.yield(value)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {

@@ -106,14 +106,15 @@ struct SimPeer {
 /// session, envelopes, room engine, UI — runs unchanged in demo mode.
 final class SimulatedTransport: MeshTransport, @unchecked Sendable {
     private let queue = DispatchQueue(label: "app.fellship.sim")
-    private var frameContinuation: AsyncStream<Data>.Continuation!
-    private var stateContinuation: AsyncStream<TransportState>.Continuation!
-    private var radiosContinuation: AsyncStream<[DiscoveredRadio]>.Continuation!
+    private let frameCaster = StreamMulticaster<Data>()
+    private let stateCaster = StreamMulticaster<TransportState>(replayLast: true)
+    private let radiosCaster = StreamMulticaster<[DiscoveredRadio]>(replayLast: true)
 
-    let incomingFrames: AsyncStream<Data>
-    let stateUpdates: AsyncStream<TransportState>
-    let discoveredRadios: AsyncStream<[DiscoveredRadio]>
+    func frames() -> AsyncStream<Data> { frameCaster.stream(bufferingNewest: 256) }
+    func states() -> AsyncStream<TransportState> { stateCaster.stream(bufferingNewest: 8) }
+    func discovered() -> AsyncStream<[DiscoveredRadio]> { radiosCaster.stream(bufferingNewest: 8) }
 
+    private let dmAssembler = FellshipEnvelope.DirectAssembler()
     private var connected = false
     private var tickTimer: DispatchSourceTimer?
     private var startTime = Date()
@@ -133,32 +134,23 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
     ]
 
     init() {
-        var frameCont: AsyncStream<Data>.Continuation!
-        incomingFrames = AsyncStream(bufferingPolicy: .bufferingNewest(256)) { frameCont = $0 }
-        var stateCont: AsyncStream<TransportState>.Continuation!
-        stateUpdates = AsyncStream(bufferingPolicy: .bufferingNewest(8)) { stateCont = $0 }
-        var radiosCont: AsyncStream<[DiscoveredRadio]>.Continuation!
-        discoveredRadios = AsyncStream(bufferingPolicy: .bufferingNewest(8)) { radiosCont = $0 }
-        frameContinuation = frameCont
-        stateContinuation = stateCont
-        radiosContinuation = radiosCont
-        stateContinuation.yield(.disconnected)
+        stateCaster.yield(.disconnected)
     }
 
     // MARK: - MeshTransport
 
     func startScanning() {
         queue.async { [self] in
-            stateContinuation.yield(.scanning)
+            stateCaster.yield(.scanning)
             queue.asyncAfter(deadline: .now() + 0.6) { [self] in
-                radiosContinuation.yield([DiscoveredRadio(id: "demo-radio", name: "Demo Radio (T-Beam)", rssi: -48)])
+                radiosCaster.yield([DiscoveredRadio(id: "demo-radio", name: "Demo Radio (T-Beam)", rssi: -48)])
             }
         }
     }
 
     func stopScanning() {
         queue.async { [self] in
-            if !connected { stateContinuation.yield(.disconnected) }
+            if !connected { stateCaster.yield(.disconnected) }
         }
     }
 
@@ -167,7 +159,7 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
         queue.sync { [self] in
             connected = true
             startTime = Date()
-            stateContinuation.yield(.connected(deviceName: "Demo Radio (T-Beam)"))
+            stateCaster.yield(.connected(deviceName: "Demo Radio (T-Beam)"))
             startTicking()
         }
     }
@@ -177,7 +169,7 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
             connected = false
             tickTimer?.cancel()
             tickTimer = nil
-            stateContinuation.yield(.disconnected)
+            stateCaster.yield(.disconnected)
         }
     }
 
@@ -195,7 +187,7 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
     private func respond(_ frame: Data, after delay: TimeInterval = 0.02) {
         queue.asyncAfter(deadline: .now() + delay) { [self] in
             guard connected else { return }
-            frameContinuation.yield(frame)
+            frameCaster.yield(frame)
         }
     }
 
@@ -335,9 +327,11 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
 
         guard let peer = SimPeer.all.first(where: { $0.radioPublicKey.prefix(6) == prefix }) else { return }
 
-        // Fellship envelope? Then it's invite plumbing; otherwise chat back.
-        if let (type, body) = try? FellshipEnvelope.openDirectText(text) {
-            handleEnvelopeDM(type: type, body: body, from: peer)
+        // Fellship envelope chunk? Then it's invite plumbing; otherwise chat back.
+        if FellshipEnvelope.isDirectEnvelope(text) {
+            if let (type, body) = dmAssembler.ingest(senderHex: "app-user", text: text) {
+                handleEnvelopeDM(type: type, body: body, from: peer)
+            }
         } else {
             let reply = "Copy that! (\(peer.name), demo)"
             queueIncomingDM(from: peer, text: reply, after: 3.5)
@@ -346,7 +340,7 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
 
     private func handleEnvelopeDM(type: FellshipEnvelope.PayloadType, body: Data, from peer: SimPeer) {
         guard type == .inviteAccept,
-              let accept = try? FellshipEnvelope.decodeBody(FellshipEnvelope.InviteAccept.self, from: body),
+              let accept = try? FellshipEnvelope.decodeDirectPayload(FellshipEnvelope.InviteAccept.self, from: body),
               accept.roomID == DemoWorld.publicRoomID,
               let inviteeKeyData = Data(hexEncoded: accept.inviteeIdentityKey),
               let inviteeKey = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: inviteeKeyData) else { return }
@@ -358,10 +352,12 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
             roomKeyData: DemoWorld.publicRoomKey.dataRepresentation)
         guard let manifestData = try? FellshipEnvelope.encodeManifest(manifest),
               let sealed = try? CryptoService.sealBox(manifestData, recipientPublicKey: inviteeKey),
-              let text = try? FellshipEnvelope.sealDirectText(
+              let chunks = try? FellshipEnvelope.directChunks(
                 FellshipEnvelope.RoomKeyDelivery(inviteID: accept.inviteID, roomID: room.id, sealedManifest: sealed),
                 type: .roomKeyDelivery) else { return }
-        queueIncomingDM(from: SimPeer.all[2], text: text, after: 2.0)
+        for (index, chunk) in chunks.enumerated() {
+            queueIncomingDM(from: SimPeer.all[2], text: chunk, after: 2.0 + Double(index) * 0.4)
+        }
         _ = peer // the accept sender; delivery always comes from Kai, the room's creator
     }
 
@@ -376,7 +372,7 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
             w.writeUInt32(UInt32(clamping: Int(Date().timeIntervalSince1970)))
             w.writeString(text)
             queuedMessages.append(w.data)
-            frameContinuation.yield(Data([MeshCore.Push.msgWaiting.rawValue]))
+            frameCaster.yield(Data([MeshCore.Push.msgWaiting.rawValue]))
         }
     }
 
@@ -391,7 +387,7 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
             w.writeUInt32(UInt32(clamping: Int(Date().timeIntervalSince1970)))
             w.writeString(text)
             queuedMessages.append(w.data)
-            frameContinuation.yield(Data([MeshCore.Push.msgWaiting.rawValue]))
+            frameCaster.yield(Data([MeshCore.Push.msgWaiting.rawValue]))
         }
     }
 
@@ -417,26 +413,23 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
 
             let presence = FellshipEnvelope.Presence(
                 memberID: peer.identityKeyHex,
-                name: peer.name,
                 isInside: inside,
-                latitude: position.latitude,
-                longitude: position.longitude,
+                coordinate: position,
                 sentAt: Date())
-            if let text = try? FellshipEnvelope.sealRoomText(presence, type: .presence,
-                                                             roomID: DemoWorld.roomID,
-                                                             roomKey: DemoWorld.roomKey) {
+            if let text = try? FellshipEnvelope.sealRoomPayload(.presence(presence),
+                                                                roomID: DemoWorld.roomID,
+                                                                roomKey: DemoWorld.roomKey) {
                 queueChannelMessage(text: text)
             }
 
             if inside != wasInside {
                 peerInsideFlags[peer.name] = inside
                 let event = FellshipEnvelope.ZoneEvent(memberID: peer.identityKeyHex,
-                                                       name: peer.name,
                                                        didEnter: inside,
                                                        sentAt: Date())
-                if let text = try? FellshipEnvelope.sealRoomText(event, type: .zoneEvent,
-                                                                 roomID: DemoWorld.roomID,
-                                                                 roomKey: DemoWorld.roomKey) {
+                if let text = try? FellshipEnvelope.sealRoomPayload(.zoneEvent(event),
+                                                                    roomID: DemoWorld.roomID,
+                                                                    roomKey: DemoWorld.roomKey) {
                     queueChannelMessage(text: text, after: 0.5)
                 }
             }
@@ -448,14 +441,14 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
             let (peerIndex, line) = chatLines[chatCursor % chatLines.count]
             chatCursor += 1
             let peer = SimPeer.all[peerIndex]
-            let chat = FellshipEnvelope.Chat(messageID: UUID().uuidString,
+            let chat = FellshipEnvelope.Chat(messageID: Data((0..<8).map { _ in UInt8.random(in: 0...255) }).hexEncoded,
                                              memberID: peer.identityKeyHex,
-                                             name: peer.name,
+                                             zoneScoped: false,
                                              text: line,
                                              sentAt: Date())
-            if let text = try? FellshipEnvelope.sealRoomText(chat, type: .chat,
-                                                             roomID: DemoWorld.roomID,
-                                                             roomKey: DemoWorld.roomKey) {
+            if let text = try? FellshipEnvelope.sealRoomPayload(.chat(chat),
+                                                                roomID: DemoWorld.roomID,
+                                                                roomKey: DemoWorld.roomKey) {
                 queueChannelMessage(text: text, after: 1.0)
             }
         }
@@ -473,8 +466,10 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
                 inviterIdentityKey: SimPeer.all[2].identityKeyHex,
                 inviterName: "Kai",
                 isAutomatic: true)
-            if let text = try? FellshipEnvelope.sealDirectText(offer, type: .inviteOffer) {
-                queueIncomingDM(from: SimPeer.all[2], text: text, after: 0)
+            if let chunks = try? FellshipEnvelope.directChunks(offer, type: .inviteOffer) {
+                for (index, chunk) in chunks.enumerated() {
+                    queueIncomingDM(from: SimPeer.all[2], text: chunk, after: Double(index) * 0.4)
+                }
             }
         }
     }

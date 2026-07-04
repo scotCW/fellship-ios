@@ -36,10 +36,10 @@ actor MeshSession {
             case contacts               // contactsStart ... endOfContacts
             case nextMessage            // one message or noMoreMessages
         }
+        let id = UUID()
         let kind: Kind
         let continuation: CheckedContinuation<[MeshCore.Event], Error>
         var accumulated: [MeshCore.Event] = []
-        let deadline: Date
     }
 
     enum SessionError: Error {
@@ -77,15 +77,15 @@ actor MeshSession {
 
     func start() {
         guard pumpTask == nil else { return }
-        pumpTask = Task { [weak self] in
-            guard let self else { return }
-            for await frame in transport.incomingFrames {
+        pumpTask = Task { [weak self, transport] in
+            for await frame in transport.frames() {
+                guard let self else { return }
                 await self.handleFrame(frame)
             }
         }
-        stateTask = Task { [weak self] in
-            guard let self else { return }
-            for await newState in transport.stateUpdates {
+        stateTask = Task { [weak self, transport] in
+            for await newState in transport.states() {
+                guard let self else { return }
                 await self.handleStateChange(newState)
             }
         }
@@ -208,35 +208,26 @@ actor MeshSession {
                          timeout: TimeInterval = 10) async throws -> [MeshCore.Event] {
         guard state.isConnected else { throw SessionError.notStarted }
         return try await withCheckedThrowingContinuation { continuation in
-            let req = PendingRequest(kind: kind, continuation: continuation,
-                                     deadline: Date().addingTimeInterval(timeout))
+            let req = PendingRequest(kind: kind, continuation: continuation)
             pending.append(req)
             Task {
                 do {
                     try await transport.send(frame)
                 } catch {
-                    self.fail(request: req, with: error)
+                    self.fail(requestID: req.id, with: error)
                 }
             }
             Task {
                 try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                self.timeoutIfStillPending(deadline: req.deadline)
+                self.fail(requestID: req.id, with: SessionError.timeout)
             }
         }
     }
 
-    private func fail(request: PendingRequest, with error: Error) {
-        if let index = pending.firstIndex(where: { $0.deadline == request.deadline && $0.accumulated.isEmpty }) {
-            let req = pending.remove(at: index)
-            req.continuation.resume(throwing: error)
-        }
-    }
-
-    private func timeoutIfStillPending(deadline: Date) {
-        guard let index = pending.firstIndex(where: { $0.deadline == deadline }) else { return }
-        guard Date() >= deadline else { return }
+    private func fail(requestID: UUID, with error: Error) {
+        guard let index = pending.firstIndex(where: { $0.id == requestID }) else { return }
         let req = pending.remove(at: index)
-        req.continuation.resume(throwing: SessionError.timeout)
+        req.continuation.resume(throwing: error)
     }
 
     // MARK: - Frame handling
@@ -244,13 +235,16 @@ actor MeshSession {
     private func handleFrame(_ frame: Data) async {
         let event = MeshCore.parseFrame(frame)
         switch event {
-        // Pushes — never part of a request/response exchange.
+        // Pushes — never part of a request/response exchange. Push handlers
+        // that themselves issue requests are spawned as separate tasks: the
+        // frame pump must never await a response that only it can deliver
+        // (that's a deadlock on this actor).
         case .advertReceived(let publicKey), .pathUpdated(let publicKey):
-            await handleAdvertPush(publicKey: publicKey)
+            Task { await self.handleAdvertPush(publicKey: publicKey) }
         case .sendConfirmed(let ack, let rtt):
             emit(.sendConfirmed(ackCRC: ack, roundTripMillis: rtt))
         case .messagesWaiting:
-            await drainMessageQueue()
+            Task { await self.drainMessageQueue() }
         // Unsolicited message frames can arrive outside a sync exchange on
         // some firmware; deliver them directly if no sync is pending.
         case .contactMessage(let message) where currentRequestKind != .nextMessage:
