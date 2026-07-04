@@ -6,18 +6,25 @@ struct RootView: View {
     @EnvironmentObject private var engine: RoomEngine
     /// Invites the user swiped away — they stay reachable from the Rooms tab.
     @State private var snoozedInviteIDs: Set<String> = []
+    /// Initial tab; overridable at launch (`-launchTab 2`) for screenshots
+    /// and UI automation.
+    @State private var selectedTab = UserDefaults.standard.integer(forKey: "launchTab")
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             MapScreen()
                 .tabItem { Label("Map", systemImage: "map") }
+                .tag(0)
             RoomListView()
                 .tabItem { Label("Rooms", systemImage: "person.3") }
                 .badge(pendingInviteCount)
+                .tag(1)
             NearbyView()
                 .tabItem { Label("Nearby", systemImage: "dot.radiowaves.left.and.right") }
+                .tag(2)
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
+                .tag(3)
         }
         .sheet(isPresented: onboardingBinding) {
             OnboardingView()
