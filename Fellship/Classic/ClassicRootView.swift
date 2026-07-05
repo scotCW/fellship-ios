@@ -7,19 +7,26 @@ struct ClassicRootView: View {
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var engine: RoomEngine
     @EnvironmentObject private var classic: ClassicStore
+    /// Launch-arg override (`-classicTab 2`) for UI automation.
+    @State private var selectedTab = UserDefaults.standard.integer(forKey: "classicTab")
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             ClassicChannelView()
                 .tabItem { Label("Channel", systemImage: "megaphone") }
+                .tag(0)
             ClassicChatsView()
                 .tabItem { Label("Messages", systemImage: "message") }
+                .tag(1)
             ClassicContactsView()
                 .tabItem { Label("Contacts", systemImage: "person.2") }
+                .tag(2)
             ClassicRadioView()
                 .tabItem { Label("Radio", systemImage: "antenna.radiowaves.left.and.right") }
+                .tag(3)
             ClassicAboutView()
                 .tabItem { Label("About", systemImage: "info.circle") }
+                .tag(4)
         }
     }
 }

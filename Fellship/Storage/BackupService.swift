@@ -118,6 +118,7 @@ enum BackupService {
         for thread in engine.directThreads() {
             messages.append(contentsOf: engine.messages(threadID: thread.peerHex))
         }
+        messages.append(contentsOf: engine.messages(threadID: ClassicStore.channelThreadID))
         return Payload(displayName: settings.displayName,
                        identityKey: CryptoService.identityPrivateKeyData(),
                        rooms: engine.rooms,

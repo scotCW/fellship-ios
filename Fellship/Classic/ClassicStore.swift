@@ -78,12 +78,22 @@ final class ClassicStore: ObservableObject {
     // MARK: - Public channel chat
 
     private func appendChannel(_ text: String, sentAt: Date, fromMe: Bool) {
-        // MeshCore convention: channel senders prefix "Name: message".
-        let parts = text.split(separator: ":", maxSplits: 1)
-        let sender = (!fromMe && parts.count == 2) ? String(parts[0]) : (fromMe ? settings.displayName : "")
-        let body = (!fromMe && parts.count == 2)
-            ? String(parts[1]).trimmingCharacters(in: .whitespaces)
-            : text
+        // MeshCore convention: channel senders prefix "Name: message". Only
+        // honor it when it actually looks like a name — "https://…" must not
+        // become a sender called "https".
+        var sender = fromMe ? settings.displayName : ""
+        var body = text
+        if !fromMe, let range = text.range(of: ": ") {
+            let candidate = String(text[..<range.lowerBound])
+            if !candidate.isEmpty, candidate.count <= 32,
+               !candidate.contains("\n"), !candidate.contains("/") {
+                sender = candidate
+                body = String(text[range.upperBound...])
+            }
+        }
+        // Radios without a clock stamp messages near the epoch; show a
+        // sane local time instead.
+        let sentAt = sentAt.timeIntervalSince1970 > 1_577_836_800 ? sentAt : Date()
         let message = RoomMessage(id: UUID().uuidString,
                                   threadID: Self.channelThreadID,
                                   scope: .room,
