@@ -46,6 +46,27 @@ reporting, no advertising SDK, and no telemetry of any kind. The developer has
 no ability to see your messages, your location, your contacts, or even the
 fact that you use the app.
 
+## Who can read, and who is trusted (the room trust model)
+
+Be clear-eyed about what the encryption does and doesn't do:
+
+- **Non-members cannot read a room.** Every room's traffic — presence,
+  positions, chat, events — is encrypted with a 256-bit key that only members
+  hold. Someone who never joined sees nothing but ciphertext.
+- **Members trust each other.** A room key is a *shared* symmetric key, so
+  every admitted member can both read and *write* room traffic. Fellship does
+  not sign each message per-sender, which means a malicious member could, in
+  principle, post chat or presence that claims to be from another member of
+  the same room. This is the normal trust model for shared-key group
+  messaging: joining a room means trusting the people already in it. Only
+  invite people you'd trust with the room. Removing a compromised member's
+  access requires the other members to start a new room (there is no key
+  rotation, by the local-first design).
+- **Hostile members can't break your app.** Even a malicious member is bounded:
+  membership and presence are capped, display names and messages are length-
+  clamped, and any malformed data is rejected rather than crashing or
+  exhausting the device.
+
 ## Mesh radio realities
 
 LoRa is a shared radio medium. Fellship encrypts all room traffic

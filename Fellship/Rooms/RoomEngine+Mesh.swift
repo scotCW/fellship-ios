@@ -78,6 +78,13 @@ extension RoomEngine {
 
     private func applyPresence(_ p: FellshipEnvelope.Presence, in room: Room) {
         let memberID = resolveMemberID(p.memberID, roomID: room.id)
+        // Refuse presence for brand-new IDs once a room is saturated, so a
+        // hostile member can't balloon the in-memory presence table with
+        // fabricated identities between staleness sweeps.
+        if presence[room.id]?[memberID] == nil,
+           (presence[room.id]?.count ?? 0) >= RoomEngine.maxMembersPerRoom {
+            return
+        }
         // Coordinates are honored only if this room shares locations — a
         // belt-and-braces check on top of the sender's broadcast-level
         // enforcement.
@@ -189,19 +196,30 @@ extension RoomEngine {
         }
     }
 
+    /// Upper bound on stored members per room. Room traffic is encrypted with
+    /// a shared symmetric key, so any *admitted* member can broadcast a
+    /// member-announce; this cap stops a hostile member from flooding fake
+    /// identities to exhaust memory/storage. Far above any realistic group.
+    static let maxMembersPerRoom = 512
+
     private func noteMember(_ member: Member, in roomID: String, keepExistingName: Bool = false) {
         var list = (try? store.members(roomID: roomID)) ?? []
         if let index = list.firstIndex(where: { $0.id == member.id }) {
             var updated = list[index]
             if !keepExistingName && !member.displayName.isEmpty {
-                updated.displayName = member.displayName
+                // Clamp display names so a hostile announce can't inject a
+                // wall of text into every member's UI.
+                updated.displayName = String(member.displayName.prefix(48))
             }
             if updated.radioPublicKey == nil { updated.radioPublicKey = member.radioPublicKey }
             list[index] = updated
             try? store.saveMember(updated, roomID: roomID)
         } else {
-            list.append(member)
-            try? store.saveMember(member, roomID: roomID)
+            guard list.count < Self.maxMembersPerRoom else { return }
+            var clamped = member
+            clamped.displayName = String(member.displayName.prefix(48))
+            list.append(clamped)
+            try? store.saveMember(clamped, roomID: roomID)
         }
         membersCache[roomID] = list
         // Migrate any provisional (prefix-keyed) presence to the full ID.

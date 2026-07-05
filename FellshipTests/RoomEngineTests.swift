@@ -206,6 +206,23 @@ final class RoomEngineTests: XCTestCase {
         XCTAssertEqual(engine.displayName(forMemberID: fullID, roomID: room.id), "Robin")
     }
 
+    // MARK: - Hostile-member hardening
+
+    func testMemberAnnounceClampsHostileDisplayName() throws {
+        let room = makeGeofencedRoom()
+        let key = try XCTUnwrap(CryptoService.roomKey(for: room.id))
+        let hostileName = String(repeating: "A", count: 500)
+        let announce = FellshipEnvelope.MemberAnnounce(
+            member: Member(id: String(repeating: "cd", count: 32),
+                           displayName: hostileName, radioPublicKey: nil, joinedAt: Date()))
+        engine.handleChannelText(try FellshipEnvelope.sealRoomPayload(.memberAnnounce(announce),
+                                                                      roomID: room.id, roomKey: key))
+        let injected = engine.members(of: room).first { $0.id == announce.member.id }
+        XCTAssertNotNil(injected)
+        XCTAssertLessThanOrEqual(injected!.displayName.count, 48,
+                                 "a hostile member's display name must be clamped")
+    }
+
     // MARK: - QR join
 
     func testQRPayloadJoinsRoomOnSecondEngine() throws {

@@ -203,15 +203,26 @@ final class RoomEngine: ObservableObject {
 
     private func sweepStalePresence() {
         let interval = settings.updateIntervalSeconds
+        // Entries older than this are dropped entirely, reclaiming memory and
+        // bounding a hostile member who floods presence for many fake IDs.
+        let dropAge = max(interval * 20, 900)
+        let now = Date()
         var changed = false
         for (roomID, roomPresence) in presence {
             guard let room = rooms.first(where: { $0.id == roomID }) else { continue }
-            for (memberID, p) in roomPresence where p.isInside && !p.isFresh(interval: interval) {
-                presence[roomID]?[memberID]?.isInside = false
-                changed = true
-                if room.kind == .rangeBased, !room.isMuted {
-                    let name = membersCache[roomID]?.first { $0.id == memberID }?.displayName ?? "A member"
-                    notifications.post(.presenceLeft(memberName: name, roomName: room.name), threadID: roomID)
+            for (memberID, p) in roomPresence {
+                if now.timeIntervalSince(p.lastHeard) > dropAge {
+                    presence[roomID]?[memberID] = nil
+                    changed = true
+                    continue
+                }
+                if p.isInside && !p.isFresh(interval: interval) {
+                    presence[roomID]?[memberID]?.isInside = false
+                    changed = true
+                    if room.kind == .rangeBased, !room.isMuted {
+                        let name = membersCache[roomID]?.first { $0.id == memberID }?.displayName ?? "A member"
+                        notifications.post(.presenceLeft(memberName: name, roomName: room.name), threadID: roomID)
+                    }
                 }
             }
         }
