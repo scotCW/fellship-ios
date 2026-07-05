@@ -11,6 +11,41 @@ struct RootView: View {
     @State private var selectedTab = UserDefaults.standard.integer(forKey: "launchTab")
 
     var body: some View {
+        VStack(spacing: 0) {
+            modeSwitcher
+            Divider()
+            if settings.activeMode == "classic" {
+                ClassicRootView()
+            } else {
+                fellshipTabs
+            }
+        }
+        .tint(settings.theme.accent)
+        .preferredColorScheme(settings.appearance.colorScheme)
+        .sheet(isPresented: onboardingBinding) {
+            OnboardingView()
+                .interactiveDismissDisabled()
+        }
+        .sheet(item: incomingInviteBinding) { invite in
+            InviteAcceptSheet(invite: invite)
+                .presentationDetents([.medium])
+        }
+    }
+
+    /// The little switch at the top: one tap flips between Fellship's rooms
+    /// and the classic MeshCore workflow. Both stay live on the same radio —
+    /// this only changes what's on screen.
+    private var modeSwitcher: some View {
+        Picker("Mode", selection: $settings.activeMode) {
+            Text("Fellship").tag("fellship")
+            Text("MeshCore").tag("classic")
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 240)
+        .padding(.vertical, 6)
+    }
+
+    private var fellshipTabs: some View {
         TabView(selection: $selectedTab) {
             MapScreen()
                 .tabItem { Label("Map", systemImage: "map") }
@@ -25,14 +60,6 @@ struct RootView: View {
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
                 .tag(3)
-        }
-        .sheet(isPresented: onboardingBinding) {
-            OnboardingView()
-                .interactiveDismissDisabled()
-        }
-        .sheet(item: incomingInviteBinding) { invite in
-            InviteAcceptSheet(invite: invite)
-                .presentationDetents([.medium])
         }
     }
 

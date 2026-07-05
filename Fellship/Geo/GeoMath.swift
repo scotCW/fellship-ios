@@ -113,7 +113,10 @@ enum GeoMath {
         return mid > 180 ? mid - 360 : mid
     }
 
-    /// Approximates a circle as a polygon for map rendering.
+    /// Approximates a circle as a polygon for map rendering. Latitudes are
+    /// clamped to web-mercator's displayable range so continent-scale zones
+    /// still render sanely; containment checks use exact haversine math and
+    /// are unaffected by this display clamp.
     static func circlePolygon(center: Coordinate, radiusMeters: Double, segments: Int = 64) -> [Coordinate] {
         guard segments >= 3, radiusMeters > 0 else { return [] }
         let latRad = center.latitude * .pi / 180
@@ -122,8 +125,9 @@ enum GeoMath {
         let dLon = dLat / cosLat
         return (0..<segments).map { i in
             let theta = Double(i) / Double(segments) * 2 * .pi
-            return Coordinate(latitude: center.latitude + dLat * sin(theta),
-                              longitude: center.longitude + dLon * cos(theta))
+            let lat = min(max(center.latitude + dLat * sin(theta), -85), 85)
+            let lon = center.longitude + dLon * cos(theta)
+            return Coordinate(latitude: lat, longitude: min(max(lon, -179.9), 179.9))
         }
     }
 }

@@ -22,11 +22,16 @@ enum MeshCore {
         case sendSelfAdvert = 7
         case setAdvertName = 8
         case syncNextMessage = 10
+        case setTxPower = 12
         case setAdvertLatLon = 14
+        case removeContact = 15
         case getBatteryVoltage = 20
         case deviceQuery = 22
+        case sendLogin = 26
+        case sendStatusReq = 27
         case getChannel = 31
         case setChannel = 32
+        case sendTelemetryReq = 39
     }
 
     enum Response: UInt8 {
@@ -51,7 +56,11 @@ enum MeshCore {
         case pathUpdated = 0x81
         case sendConfirmed = 0x82
         case msgWaiting = 0x83
+        case loginSuccess = 0x85
+        case loginFail = 0x86
+        case statusResponse = 0x87
         case newAdvert = 0x8A
+        case telemetryResponse = 0x8B
     }
 
     enum TextType: UInt8 {
@@ -137,6 +146,41 @@ enum MeshCore {
 
     static func deviceQueryFrame(appTargetVersion: UInt8 = 1) -> Data {
         Data([Command.deviceQuery.rawValue, appTargetVersion])
+    }
+
+    static func setTxPowerFrame(dBm: UInt8) -> Data {
+        Data([Command.setTxPower.rawValue, dBm])
+    }
+
+    static func removeContactFrame(publicKey: Data) -> Data {
+        var w = BinaryWriter()
+        w.writeUInt8(Command.removeContact.rawValue)
+        w.writeBytes(publicKey.prefix(32))
+        return w.data
+    }
+
+    /// Authenticate against a repeater/room server (max 15-char password).
+    static func sendLoginFrame(publicKey: Data, password: String) -> Data {
+        var w = BinaryWriter()
+        w.writeUInt8(Command.sendLogin.rawValue)
+        w.writeBytes(publicKey.prefix(32))
+        w.writeString(String(password.prefix(15)))
+        return w.data
+    }
+
+    static func sendStatusReqFrame(publicKey: Data) -> Data {
+        var w = BinaryWriter()
+        w.writeUInt8(Command.sendStatusReq.rawValue)
+        w.writeBytes(publicKey.prefix(32))
+        return w.data
+    }
+
+    static func sendTelemetryReqFrame(publicKey: Data) -> Data {
+        var w = BinaryWriter()
+        w.writeUInt8(Command.sendTelemetryReq.rawValue)
+        w.writeBytes(Data([0, 0, 0])) // reserved
+        w.writeBytes(publicKey.prefix(32))
+        return w.data
     }
 
     static func getChannelFrame(index: UInt8) -> Data {
@@ -231,6 +275,9 @@ enum MeshCore {
         case pathUpdated(publicKey: Data)
         case sendConfirmed(ackCRC: UInt32, roundTripMillis: UInt32)
         case messagesWaiting
+        case loginResult(senderPrefix: Data, success: Bool)
+        case statusResponse(senderPrefix: Data, payload: Data)
+        case telemetryResponse(senderPrefix: Data, lppData: Data)
         case unknown(code: UInt8, payload: Data)
     }
 
@@ -293,6 +340,20 @@ enum MeshCore {
                                           roundTripMillis: try r.readUInt32())
                 case .msgWaiting:
                     return .messagesWaiting
+                case .loginSuccess, .loginFail:
+                    try r.skip(1) // reserved
+                    return .loginResult(senderPrefix: try r.readBytes(6),
+                                        success: push == .loginSuccess)
+                case .statusResponse:
+                    try r.skip(1)
+                    let prefix = try r.readBytes(6)
+                    return .statusResponse(senderPrefix: prefix,
+                                           payload: try r.readBytes(r.remainingCount))
+                case .telemetryResponse:
+                    try r.skip(1)
+                    let prefix = try r.readBytes(6)
+                    return .telemetryResponse(senderPrefix: prefix,
+                                              lppData: try r.readBytes(r.remainingCount))
                 }
             }
         } catch {

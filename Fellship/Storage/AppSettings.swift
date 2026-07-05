@@ -20,10 +20,35 @@ enum TileSourceKind: String, CaseIterable, Identifiable, Codable {
     }
 }
 
-enum DistanceUnits: String, CaseIterable, Identifiable, Codable {
-    case metric, imperial
+/// App-wide accent themes. All free, forever — theming is not a thing anyone
+/// should pay for.
+enum AppTheme: String, CaseIterable, Identifiable, Codable {
+    case fell, ocean, ember, moss, violet, slate
+
     var id: String { rawValue }
-    var displayName: String { self == .metric ? "Metric" : "Imperial" }
+
+    var displayName: String {
+        switch self {
+        case .fell: return "Fell Teal"
+        case .ocean: return "Ocean"
+        case .ember: return "Ember"
+        case .moss: return "Moss"
+        case .violet: return "Violet"
+        case .slate: return "Slate"
+        }
+    }
+}
+
+enum AppearanceOverride: String, CaseIterable, Identifiable, Codable {
+    case system, light, dark
+    var id: String { rawValue }
+    var displayName: String { rawValue.capitalized }
+}
+
+enum DistanceUnits: String, CaseIterable, Identifiable, Codable {
+    case imperial, metric
+    var id: String { rawValue }
+    var displayName: String { self == .metric ? "Kilometers" : "Miles (US)" }
 }
 
 /// Global app settings. Non-sensitive values live in UserDefaults; the custom
@@ -76,6 +101,17 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(units.rawValue, forKey: "units") }
     }
 
+    /// Upper bound of the circle-zone radius slider, in meters. Mesh networks
+    /// can span enormous areas, but a slider spanning 10,000 miles would make
+    /// a 1-mile circle impossible to set precisely — so the ceiling itself is
+    /// the user's choice (default 10 mi, up to 10,000 mi).
+    @Published var maxCircleRadiusMeters: Double {
+        didSet { defaults.set(maxCircleRadiusMeters, forKey: "maxCircleRadius") }
+    }
+
+    static let minCircleRadiusMeters: Double = 50
+    static let maxCircleRadiusCeilingMeters: Double = 16_093_440 // 10,000 mi
+
     @Published var onboardingComplete: Bool {
         didSet { defaults.set(onboardingComplete, forKey: "onboardingComplete") }
     }
@@ -88,6 +124,19 @@ final class AppSettings: ObservableObject {
 
     @Published var displayName: String {
         didSet { defaults.set(displayName, forKey: "displayName") }
+    }
+
+    @Published var theme: AppTheme {
+        didSet { defaults.set(theme.rawValue, forKey: "theme") }
+    }
+
+    @Published var appearance: AppearanceOverride {
+        didSet { defaults.set(appearance.rawValue, forKey: "appearance") }
+    }
+
+    /// Which top-level mode is showing: Fellship rooms or classic MeshCore.
+    @Published var activeMode: String {
+        didSet { defaults.set(activeMode, forKey: "activeMode") }
     }
 
     /// Auto-reconnect target: the identifier of the last paired radio.
@@ -103,10 +152,17 @@ final class AppSettings: ObservableObject {
         tileSource = TileSourceKind(rawValue: defaults.string(forKey: "tileSource") ?? "") ?? .openStreetMap
         customTileTemplate = keychain.load(Self.customTemplateKey).flatMap { String(data: $0, encoding: .utf8) } ?? ""
         customAPIDisclaimerShown = defaults.bool(forKey: "customAPIDisclaimerShown")
-        units = DistanceUnits(rawValue: defaults.string(forKey: "units") ?? "") ?? .metric
+        units = DistanceUnits(rawValue: defaults.string(forKey: "units") ?? "") ?? .imperial
+        let storedMaxRadius = defaults.double(forKey: "maxCircleRadius")
+        maxCircleRadiusMeters = storedMaxRadius > 0
+            ? min(storedMaxRadius, Self.maxCircleRadiusCeilingMeters)
+            : 16_093 // 10 miles
         onboardingComplete = defaults.bool(forKey: "onboardingComplete")
         demoMode = defaults.bool(forKey: "demoMode")
         displayName = defaults.string(forKey: "displayName") ?? ""
+        theme = AppTheme(rawValue: defaults.string(forKey: "theme") ?? "") ?? .fell
+        appearance = AppearanceOverride(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .system
+        activeMode = defaults.string(forKey: "activeMode") ?? "fellship"
         lastRadioIdentifier = defaults.string(forKey: "lastRadioIdentifier")
     }
 }

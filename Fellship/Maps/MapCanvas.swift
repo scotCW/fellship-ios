@@ -7,6 +7,7 @@ struct MapMarker: Identifiable, Equatable {
         case me
         case member
         case contact
+        case vertex
     }
 
     var id: String
@@ -36,14 +37,15 @@ struct MapCanvas: UIViewRepresentable {
     var styleURL: URL
     var markers: [MapMarker] = []
     var boundaries: [MapBoundaryOverlay] = []
-    /// Points captured so far while tracing a freeform boundary.
+    /// Corners placed so far for an open (not yet closed) outline; rendered
+    /// as straight connected segments with a dot at each corner.
     var draftPolygon: [Coordinate] = []
-    /// Draft circle/box previews while creating a room.
+    /// Draft circle/box/closed-polygon previews while creating a room.
     var draftBoundary: Boundary?
-    /// When true, touches trace a polygon instead of panning the map.
-    var isTracing = false
+    /// When true, single taps report a coordinate (corner placement).
+    var tapToPlaceEnabled = false
     var cameraTarget: CameraTarget?
-    var onTracePoint: ((Coordinate) -> Void)?
+    var onMapTap: ((Coordinate) -> Void)?
     var onCameraIdle: ((Coordinate, Double) -> Void)?
 
     func makeUIView(context: Context) -> MLNMapView {
@@ -56,12 +58,19 @@ struct MapCanvas: UIViewRepresentable {
         context.coordinator.mapView = mapView
         context.coordinator.appliedStyleURL = styleURL
 
-        let trace = UIPanGestureRecognizer(target: context.coordinator,
-                                           action: #selector(Coordinator.handleTrace(_:)))
-        trace.maximumNumberOfTouches = 1
-        trace.delegate = context.coordinator
-        mapView.addGestureRecognizer(trace)
-        context.coordinator.traceRecognizer = trace
+        let tap = UITapGestureRecognizer(target: context.coordinator,
+                                         action: #selector(Coordinator.handleTap(_:)))
+        tap.numberOfTapsRequired = 1
+        // Don't steal MapLibre's double-tap zoom: our single tap waits for
+        // any built-in double-tap to fail first.
+        for recognizer in mapView.gestureRecognizers ?? [] {
+            if let existingTap = recognizer as? UITapGestureRecognizer,
+               existingTap.numberOfTapsRequired == 2 {
+                tap.require(toFail: existingTap)
+            }
+        }
+        mapView.addGestureRecognizer(tap)
+        context.coordinator.tapRecognizer = tap
 
         return mapView
     }
@@ -75,9 +84,7 @@ struct MapCanvas: UIViewRepresentable {
             mapView.styleURL = styleURL
         }
 
-        coordinator.traceRecognizer?.isEnabled = isTracing
-        mapView.isScrollEnabled = !isTracing
-        mapView.isRotateEnabled = !isTracing
+        coordinator.tapRecognizer?.isEnabled = tapToPlaceEnabled
         mapView.isPitchEnabled = false
 
         if let target = cameraTarget, coordinator.appliedCameraID != target.id {
@@ -103,7 +110,7 @@ struct MapCanvas: UIViewRepresentable {
     final class Coordinator: NSObject, MLNMapViewDelegate, UIGestureRecognizerDelegate {
         var parent: MapCanvas
         weak var mapView: MLNMapView?
-        var traceRecognizer: UIPanGestureRecognizer?
+        var tapRecognizer: UITapGestureRecognizer?
         var appliedStyleURL: URL?
         var appliedCameraID: UUID?
 
@@ -162,6 +169,16 @@ struct MapCanvas: UIViewRepresentable {
                 line.title = "draft-line"
                 mapView.addAnnotation(line)
                 currentAnnotations.append(line)
+            }
+
+            // A dot on every placed corner of an open outline.
+            for vertex in draftPolygon {
+                let dot = FellshipPointAnnotation()
+                dot.coordinate = CLLocationCoordinate2D(latitude: vertex.latitude,
+                                                        longitude: vertex.longitude)
+                dot.kind = .vertex
+                mapView.addAnnotation(dot)
+                currentAnnotations.append(dot)
             }
 
             for marker in markers {
@@ -237,6 +254,18 @@ struct MapCanvas: UIViewRepresentable {
         }
 
         static func markerImage(name: String, kind: MapMarker.Kind) -> UIImage {
+            if kind == .vertex {
+                // Small corner dot for the outline editor.
+                let size = CGSize(width: 14, height: 14)
+                return UIGraphicsImageRenderer(size: size).image { ctx in
+                    let rect = CGRect(origin: .zero, size: size).insetBy(dx: 1, dy: 1)
+                    ctx.cgContext.setFillColor(UIColor.systemOrange.cgColor)
+                    ctx.cgContext.fillEllipse(in: rect)
+                    ctx.cgContext.setStrokeColor(UIColor.white.cgColor)
+                    ctx.cgContext.setLineWidth(1.5)
+                    ctx.cgContext.strokeEllipse(in: rect)
+                }
+            }
             let size = CGSize(width: 34, height: 34)
             let renderer = UIGraphicsImageRenderer(size: size)
             let color: UIColor
@@ -244,6 +273,7 @@ struct MapCanvas: UIViewRepresentable {
             case .me: color = .systemBlue
             case .member: color = .systemTeal
             case .contact: color = .systemOrange
+            case .vertex: color = .systemOrange // unreachable; handled above
             }
             let initial = String(name.trimmingCharacters(in: .whitespaces).prefix(1)).uppercased()
             return renderer.image { ctx in
@@ -265,7 +295,10 @@ struct MapCanvas: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MLNMapView, annotationCanShowCallout annotation: MLNAnnotation) -> Bool {
-            annotation is MLNPointAnnotation
+            if let point = annotation as? FellshipPointAnnotation, point.kind == .vertex {
+                return false // corner dots aren't tappable content
+            }
+            return annotation is MLNPointAnnotation
         }
 
         // MARK: Camera reporting
@@ -276,24 +309,14 @@ struct MapCanvas: UIViewRepresentable {
                                  mapView.zoomLevel)
         }
 
-        // MARK: Polygon tracing
+        // MARK: Corner placement
 
-        @objc func handleTrace(_ recognizer: UIPanGestureRecognizer) {
-            guard parent.isTracing, let mapView else { return }
-            switch recognizer.state {
-            case .began, .changed:
-                let point = recognizer.location(in: mapView)
-                let coordinate = mapView.convert(point, toCoordinateFrom: mapView)
-                parent.onTracePoint?(Coordinate(latitude: coordinate.latitude,
-                                                longitude: coordinate.longitude))
-            default:
-                break
-            }
-        }
-
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-            false
+        @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
+            guard parent.tapToPlaceEnabled, recognizer.state == .ended, let mapView else { return }
+            let point = recognizer.location(in: mapView)
+            let coordinate = mapView.convert(point, toCoordinateFrom: mapView)
+            parent.onMapTap?(Coordinate(latitude: coordinate.latitude,
+                                        longitude: coordinate.longitude))
         }
     }
 }

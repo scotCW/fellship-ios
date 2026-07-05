@@ -52,6 +52,28 @@ enum CryptoService {
         identity().publicKey.rawRepresentation.hexEncoded
     }
 
+    /// Raw identity private key, for user-initiated encrypted backups only.
+    static func identityPrivateKeyData() -> Data? {
+        identity().rawRepresentation
+    }
+
+    /// Replaces the device identity from a restored backup. Only sane on a
+    /// fresh install — the caller enforces that.
+    static func adoptIdentity(_ raw: Data) -> Bool {
+        guard let key = try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: raw) else {
+            return false
+        }
+        identityLock.lock()
+        defer { identityLock.unlock() }
+        do {
+            try keychain.save(key.rawRepresentation, for: identityKeyName)
+            cachedIdentity = key
+            return true
+        } catch {
+            return false
+        }
+    }
+
     // MARK: - Room keys
 
     static func generateRoomKey() -> SymmetricKey {

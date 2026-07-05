@@ -21,9 +21,12 @@ struct SettingsView: View {
                 identitySection
                 radioSection
                 locationSection
+                zonesSection
                 publicRoomsSection
                 mapSection
                 notificationSection
+                appearanceSection
+                backupSection
                 donationSection
                 aboutSection
             }
@@ -120,6 +123,37 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: Zones & units
+
+    private var zonesSection: some View {
+        Section {
+            Picker("Units", selection: $settings.units) {
+                ForEach(DistanceUnits.allCases) { unit in
+                    Text(unit.displayName).tag(unit)
+                }
+            }
+            .pickerStyle(.segmented)
+            VStack(alignment: .leading, spacing: 4) {
+                Slider(value: maxCircleBinding, in: 0...1)
+                Text("Largest circle zone: \(Format.distance(settings.maxCircleRadiusMeters, units: settings.units)) radius")
+                    .font(.callout.weight(.medium))
+            }
+        } header: {
+            Text("Zones & units")
+        } footer: {
+            Text("Mesh networks can span enormous areas, so circle zones can too. This sets the top of the radius slider when drawing a circle — keep it small for precision, raise it (up to \(Format.distance(AppSettings.maxCircleRadiusCeilingMeters, units: settings.units))) when your network is huge.")
+        }
+    }
+
+    /// Log-scale position binding for the max-circle ceiling (1 mi … 10,000 mi).
+    private var maxCircleBinding: Binding<Double> {
+        let floor: Double = 1609 // 1 mile
+        let ceiling = AppSettings.maxCircleRadiusCeilingMeters
+        return Binding(
+            get: { LogScale.position(of: settings.maxCircleRadiusMeters, min: floor, max: ceiling) },
+            set: { settings.maxCircleRadiusMeters = LogScale.value(at: $0, min: floor, max: ceiling) })
+    }
+
     // MARK: Public rooms
 
     private var publicRoomsSection: some View {
@@ -214,6 +248,20 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: Backup (owner-approved: explicit, passphrase-encrypted, user-held)
+
+    private var backupSection: some View {
+        Section {
+            NavigationLink {
+                BackupView()
+            } label: {
+                Label("Back up & restore", systemImage: "externaldrive.badge.timemachine")
+            }
+        } footer: {
+            Text("Export an encrypted file of your rooms, keys, contacts and messages to keep wherever you like. Backups are protected by a passphrase you choose — lose both phone and passphrase and the data is gone.")
+        }
+    }
+
     // MARK: Donations (spec §10 — no IAP, no payment plumbing, no server)
 
     private var donationSection: some View {
@@ -257,6 +305,28 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: Appearance (free themes, both modes)
+
+    private var appearanceSection: some View {
+        Section("Appearance") {
+            Picker("Theme", selection: $settings.theme) {
+                ForEach(AppTheme.allCases) { theme in
+                    HStack {
+                        Circle().fill(theme.accent).frame(width: 14, height: 14)
+                        Text(theme.displayName)
+                    }
+                    .tag(theme)
+                }
+            }
+            Picker("Mode", selection: $settings.appearance) {
+                ForEach(AppearanceOverride.allCases) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+
     // MARK: About / legal (spec §13)
 
     private var aboutSection: some View {
@@ -265,8 +335,6 @@ struct SettingsView: View {
                 PrivacyDisclosureView()
             }
             LabeledContent("Version", value: Bundle.main.shortVersion)
-            Link("Source code & licenses",
-                 destination: URL(string: "https://example.com/replace-with-your-repo")!)
         }
     }
 }

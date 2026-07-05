@@ -15,15 +15,26 @@ enum Format {
         return relative.localizedString(for: date, relativeTo: Date())
     }
 
+    private static let grouped: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.maximumFractionDigits = 0
+        return f
+    }()
+
     static func distance(_ meters: Double, units: DistanceUnits) -> String {
         switch units {
         case .metric:
             if meters < 1000 { return String(format: "%.0f m", meters) }
-            return String(format: "%.1f km", meters / 1000)
+            let km = meters / 1000
+            if km < 100 { return String(format: "%.1f km", km) }
+            return "\(grouped.string(from: NSNumber(value: km.rounded())) ?? "\(Int(km))") km"
         case .imperial:
             let feet = meters * 3.28084
             if feet < 1000 { return String(format: "%.0f ft", feet) }
-            return String(format: "%.1f mi", feet / 5280)
+            let miles = feet / 5280
+            if miles < 100 { return String(format: "%.1f mi", miles) }
+            return "\(grouped.string(from: NSNumber(value: miles.rounded())) ?? "\(Int(miles))") mi"
         }
     }
 
@@ -55,5 +66,21 @@ enum Format {
 
     static func coordinate(_ c: Coordinate) -> String {
         String(format: "%.5f, %.5f", c.latitude, c.longitude)
+    }
+}
+
+/// Maps a 0…1 slider position onto a value range logarithmically, so one
+/// slider stays precise from 50 m all the way to 10,000 mi.
+enum LogScale {
+    static func value(at t: Double, min: Double, max: Double) -> Double {
+        guard min > 0, max > min else { return min }
+        let clamped = Swift.min(Swift.max(t, 0), 1)
+        return min * pow(max / min, clamped)
+    }
+
+    static func position(of value: Double, min: Double, max: Double) -> Double {
+        guard min > 0, max > min else { return 0 }
+        let clamped = Swift.min(Swift.max(value, min), max)
+        return log(clamped / min) / log(max / min)
     }
 }

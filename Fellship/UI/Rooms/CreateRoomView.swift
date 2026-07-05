@@ -5,6 +5,7 @@ struct CreateRoomView: View {
     @EnvironmentObject private var engine: RoomEngine
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var location: LocationService
+    @EnvironmentObject private var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
 
     // Basics
@@ -24,13 +25,23 @@ struct CreateRoomView: View {
     }
     @State private var tool: BoundaryTool = .circle
     @State private var mapCenter: Coordinate?
-    @State private var circleRadius: Double = 300
+    /// Circle radius as a 0…1 log-scale slider position (precise at 100 m
+    /// and usable at 10,000 mi on the same control).
+    @State private var circleSliderPosition = 0.35
     @State private var boxCornerA: Coordinate?
     @State private var boxCornerB: Coordinate?
-    @State private var tracedPoints: [Coordinate] = []
-    @State private var isTracing = false
+    /// Tap-placed polygon corners, joined by straight lines.
+    @State private var vertices: [Coordinate] = []
+    /// The outline only becomes a usable zone once explicitly closed.
+    @State private var isShapeClosed = false
     @State private var cameraTarget: CameraTarget?
     @State private var step = 0
+
+    private var circleRadius: Double {
+        LogScale.value(at: circleSliderPosition,
+                       min: AppSettings.minCircleRadiusMeters,
+                       max: settings.maxCircleRadiusMeters)
+    }
 
     var body: some View {
         NavigationStack {
@@ -132,15 +143,12 @@ struct CreateRoomView: View {
             MapCanvas(styleURL: app.mapStyle.style,
                       markers: [],
                       boundaries: [],
-                      draftPolygon: tracedPoints,
+                      draftPolygon: isShapeClosed ? [] : vertices,
                       draftBoundary: draftBoundary,
-                      isTracing: isTracing,
+                      tapToPlaceEnabled: tool == .outline && !isShapeClosed,
                       cameraTarget: cameraTarget,
-                      onTracePoint: { point in
-                          if tracedPoints.isEmpty
-                              || GeoMath.distanceMeters(tracedPoints.last!, point) > 5 {
-                              tracedPoints.append(point)
-                          }
+                      onMapTap: { point in
+                          vertices.append(point)
                       },
                       onCameraIdle: { center, _ in
                           mapCenter = center
@@ -170,8 +178,8 @@ struct CreateRoomView: View {
             let b = boxCornerB ?? mapCenter ?? a
             return .box(cornerA: a, cornerB: b)
         case .outline:
-            guard tracedPoints.count >= 3 else { return nil }
-            return .polygon(vertices: tracedPoints)
+            guard isShapeClosed, vertices.count >= 3 else { return nil }
+            return .polygon(vertices: vertices)
         }
     }
 
@@ -193,10 +201,13 @@ struct CreateRoomView: View {
             switch tool {
             case .circle:
                 VStack(spacing: 4) {
-                    Slider(value: $circleRadius, in: 50...5000, step: 25)
-                    Text("Radius: \(Format.distance(circleRadius, units: .metric)) — pan the map to position the center")
+                    Slider(value: $circleSliderPosition, in: 0...1)
+                    Text("Radius: \(Format.distance(circleRadius, units: settings.units)) — pan the map to position the center")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    Text("Slider max is \(Format.distance(settings.maxCircleRadiusMeters, units: settings.units)) — raise it in Settings → Zones")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
             case .box:
                 HStack(spacing: 10) {
@@ -219,21 +230,37 @@ struct CreateRoomView: View {
                 }
                 .font(.callout)
             case .outline:
-                HStack(spacing: 10) {
-                    Button(isTracing ? "Stop drawing" : (tracedPoints.isEmpty ? "Start drawing" : "Keep drawing")) {
-                        isTracing.toggle()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    if !tracedPoints.isEmpty {
-                        Button("Clear") {
-                            tracedPoints.removeAll()
-                            isTracing = false
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                    Text("\(tracedPoints.count) points")
+                VStack(spacing: 8) {
+                    Text(isShapeClosed
+                         ? "Shape closed — \(vertices.count) corners. Reopen to keep editing."
+                         : (vertices.isEmpty
+                            ? "Tap the map to drop corners — straight lines connect them."
+                            : "\(vertices.count) corner\(vertices.count == 1 ? "" : "s") placed. Close the shape when the zone is enclosed."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: 10) {
+                        Button {
+                            isShapeClosed.toggle()
+                        } label: {
+                            Text(isShapeClosed ? "Reopen" : "Close shape")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!isShapeClosed && vertices.count < 3)
+                        Button("Undo corner") {
+                            isShapeClosed = false
+                            _ = vertices.popLast()
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(vertices.isEmpty)
+                        Button("Clear") {
+                            vertices.removeAll()
+                            isShapeClosed = false
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(vertices.isEmpty)
+                    }
+                    .font(.callout)
                 }
             }
         }

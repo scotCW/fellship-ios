@@ -10,6 +10,9 @@ enum MeshEvent: Sendable {
     case sendConfirmed(ackCRC: UInt32, roundTripMillis: UInt32)
     case batteryUpdated(milliVolts: UInt16)
     case deviceInfoUpdated(MeshCore.DeviceInfo)
+    case loginResult(senderPrefixHex: String, success: Bool)
+    case statusResponse(senderPrefixHex: String, payload: Data)
+    case telemetry(senderPrefixHex: String, readings: [CayenneLPP.Reading])
 }
 
 /// Orchestrates one connected radio: serializes commands, correlates the
@@ -165,11 +168,54 @@ actor MeshSession {
     }
 
     @discardableResult
-    func sendDirectText(_ text: String, to publicKey: Data) async throws -> MeshCore.SendResult {
-        let frame = MeshCore.sendTxtMsgFrame(text: text, recipientPublicKeyPrefix: publicKey)
+    func sendDirectText(_ text: String, to publicKey: Data,
+                        attempt: UInt8 = 0) async throws -> MeshCore.SendResult {
+        let frame = MeshCore.sendTxtMsgFrame(text: text, recipientPublicKeyPrefix: publicKey,
+                                             attempt: attempt)
         let events = try await request(frame, kind: .simple)
         guard case .sent(let result)? = events.first else { throw SessionError.radioError }
         return result
+    }
+
+    /// Fire a CLI command at a repeater/room server (shows up on its console;
+    /// replies come back as ordinary contact messages).
+    @discardableResult
+    func sendCommand(_ command: String, to publicKey: Data) async throws -> MeshCore.SendResult {
+        var w = BinaryWriter()
+        w.writeUInt8(MeshCore.Command.sendTxtMsg.rawValue)
+        w.writeUInt8(MeshCore.TextType.cliData.rawValue)
+        w.writeUInt8(0)
+        w.writeUInt32(UInt32(clamping: Int(Date().timeIntervalSince1970)))
+        w.writeBytes(publicKey.prefix(6))
+        w.writeString(command)
+        let events = try await request(w.data, kind: .simple)
+        guard case .sent(let result)? = events.first else { throw SessionError.radioError }
+        return result
+    }
+
+    func setTxPower(dBm: UInt8) async throws {
+        _ = try await request(MeshCore.setTxPowerFrame(dBm: dBm), kind: .simple)
+    }
+
+    func removeContact(publicKey: Data) async throws {
+        _ = try await request(MeshCore.removeContactFrame(publicKey: publicKey), kind: .simple)
+        contacts[publicKey] = nil
+    }
+
+    /// Result arrives asynchronously as a `.loginResult` event.
+    func login(publicKey: Data, password: String) async throws {
+        _ = try await request(MeshCore.sendLoginFrame(publicKey: publicKey, password: password),
+                              kind: .simple)
+    }
+
+    /// Result arrives asynchronously as a `.statusResponse` event.
+    func requestStatus(publicKey: Data) async throws {
+        _ = try await request(MeshCore.sendStatusReqFrame(publicKey: publicKey), kind: .simple)
+    }
+
+    /// Result arrives asynchronously as a `.telemetry` event.
+    func requestTelemetry(publicKey: Data) async throws {
+        _ = try await request(MeshCore.sendTelemetryReqFrame(publicKey: publicKey), kind: .simple)
     }
 
     @discardableResult
@@ -293,6 +339,13 @@ actor MeshSession {
             emit(.sendConfirmed(ackCRC: ack, roundTripMillis: rtt))
         case .messagesWaiting:
             Task { await self.drainMessageQueue() }
+        case .loginResult(let prefix, let success):
+            emit(.loginResult(senderPrefixHex: prefix.hexEncoded, success: success))
+        case .statusResponse(let prefix, let payload):
+            emit(.statusResponse(senderPrefixHex: prefix.hexEncoded, payload: payload))
+        case .telemetryResponse(let prefix, let lppData):
+            emit(.telemetry(senderPrefixHex: prefix.hexEncoded,
+                            readings: CayenneLPP.decode(lppData)))
         // Unsolicited message frames can arrive outside a sync exchange on
         // some firmware; deliver them directly if no sync is pending.
         case .contactMessage(let message) where currentRequestKind != .nextMessage:

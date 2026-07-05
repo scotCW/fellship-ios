@@ -9,6 +9,7 @@ final class AppState: ObservableObject {
     let store: LocalStore
     let notifications: NotificationService
     let engine: RoomEngine
+    let classic: ClassicStore
     let location: LocationService
     let background: BackgroundMonitor
     let offlineMaps: OfflineMapManager
@@ -40,6 +41,7 @@ final class AppState: ObservableObject {
         store = (try? LocalStore()) ?? LocalStore.ephemeral()
         notifications = NotificationService()
         engine = RoomEngine(store: store, settings: settings, notifications: notifications)
+        classic = ClassicStore(store: store, settings: settings)
         location = LocationService()
         background = BackgroundMonitor()
         offlineMaps = OfflineMapManager()
@@ -107,6 +109,7 @@ final class AppState: ObservableObject {
             let info = try await session.appStart()
             selfInfo = info
             engine.attach(session: session)
+            classic.attach(session: session)
             location.attach(session: session)
             location.setRadioConnected(true)
             settings.lastRadioIdentifier = settings.demoMode ? nil : radio.id
@@ -182,6 +185,7 @@ final class AppState: ObservableObject {
         session = nil
         transport?.disconnect()
         engine.detachSession()
+        classic.detach()
         location.attach(session: nil)
         location.setRadioConnected(false)
         selfInfo = nil

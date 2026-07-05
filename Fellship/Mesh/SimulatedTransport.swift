@@ -60,6 +60,8 @@ struct SimPeer {
     var orbitRadiusMeters: Double
     var orbitPeriodSeconds: Double
     var phase: Double
+    /// MeshCore node type: 1 = chat companion, 2 = repeater.
+    var nodeType: UInt8 = 1
 
     var radioPublicKey: Data {
         Data(SHA256.hash(data: Data(radioKeySeed.utf8)))
@@ -99,6 +101,18 @@ struct SimPeer {
                 identitySeed: "fellship.demo.peer.kai.id",
                 orbitRadiusMeters: 500, orbitPeriodSeconds: 540, phase: 4.2),
     ]
+
+    /// A stationary repeater on the ridge — lets the classic mode's login,
+    /// status, telemetry and CLI tools be exercised in demo mode.
+    /// Password: "demo".
+    static let repeater = SimPeer(name: "Ridge Repeater",
+                                  radioKeySeed: "fellship.demo.repeater.radio",
+                                  identitySeed: "fellship.demo.repeater.id",
+                                  orbitRadiusMeters: 0, orbitPeriodSeconds: 1, phase: 0,
+                                  nodeType: 2)
+
+    /// Everything visible as a radio contact (members + infrastructure).
+    static var allNodes: [SimPeer] { all + [repeater] }
 }
 
 /// A fully simulated MeshCore radio + tiny mesh of scripted peers. Implements
@@ -123,6 +137,7 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
     // same opening line.
     private var chatCursor = Int.random(in: 0..<5)
     private var inviteSent = false
+    private var removedContacts: Set<String> = []
     private var peerInsideFlags: [String: Bool] = [:]
     private var queuedMessages: [Data] = [] // frames waiting behind msgWaiting
     private let selfRadioKey = Data(SHA256.hash(data: Data("fellship.demo.self.radio".utf8)))
@@ -217,7 +232,7 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
             }
         case .getContacts:
             respond(Data([MeshCore.Response.contactsStart.rawValue]))
-            for peer in SimPeer.all {
+            for peer in SimPeer.allNodes where !removedContacts.contains(peer.name) {
                 respond(contactFrame(for: peer))
             }
             respond(Data([MeshCore.Response.endOfContacts.rawValue]))
@@ -245,8 +260,52 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
             w.writeCString(index == 0 ? "Public" : "", fieldLength: 32)
             w.writeBytes(Data(repeating: 0, count: 16))
             respond(w.data)
-        case .setChannel, .setAdvertLatLon, .setAdvertName, .sendSelfAdvert, .setDeviceTime:
+        case .setChannel, .setAdvertLatLon, .setAdvertName, .sendSelfAdvert, .setDeviceTime,
+             .setTxPower:
             respond(Data([MeshCore.Response.ok.rawValue]))
+        case .removeContact:
+            var r = BinaryReader(frame.dropFirst())
+            if let key = try? r.readBytes(32),
+               let peer = SimPeer.allNodes.first(where: { $0.radioPublicKey == key }) {
+                removedContacts.insert(peer.name)
+            }
+            respond(Data([MeshCore.Response.ok.rawValue]))
+        case .sendLogin:
+            var r = BinaryReader(frame.dropFirst())
+            let key = (try? r.readBytes(32)) ?? Data()
+            let password = r.readStringToEnd()
+            respond(sentFrame())
+            if key == SimPeer.repeater.radioPublicKey {
+                var w = BinaryWriter()
+                w.writeUInt8(password == "demo"
+                             ? MeshCore.Push.loginSuccess.rawValue
+                             : MeshCore.Push.loginFail.rawValue)
+                w.writeUInt8(0)
+                w.writeBytes(SimPeer.repeater.radioPublicKey.prefix(6))
+                respond(w.data, after: 1.2)
+            }
+        case .sendStatusReq:
+            respond(sentFrame())
+            var w = BinaryWriter()
+            w.writeUInt8(MeshCore.Push.statusResponse.rawValue)
+            w.writeUInt8(0)
+            w.writeBytes(SimPeer.repeater.radioPublicKey.prefix(6))
+            w.writeBytes(Data(repeating: 0, count: 8)) // opaque stats blob
+            respond(w.data, after: 1.5)
+        case .sendTelemetryReq:
+            var r = BinaryReader(frame.dropFirst())
+            _ = try? r.skip(3)
+            let target = (try? r.readBytes(32)) ?? Data()
+            respond(sentFrame())
+            guard let peer = SimPeer.allNodes.first(where: { $0.radioPublicKey == target }) else { return }
+            var w = BinaryWriter()
+            w.writeUInt8(MeshCore.Push.telemetryResponse.rawValue)
+            w.writeUInt8(0)
+            w.writeBytes(peer.radioPublicKey.prefix(6))
+            // Cayenne LPP (big-endian): ch1 voltage 4.01 V, ch2 temp 22.5 °C
+            w.writeBytes(Data([1, 0x74, 0x01, 0x91,
+                               2, 0x67, 0x00, 0xE1]))
+            respond(w.data, after: 1.4)
         case .getDeviceTime:
             var w = BinaryWriter()
             w.writeUInt8(MeshCore.Response.currTime.rawValue)
@@ -286,7 +345,7 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
         var w = BinaryWriter()
         w.writeUInt8(MeshCore.Response.contact.rawValue)
         w.writeBytes(peer.radioPublicKey)
-        w.writeUInt8(1) // chat node
+        w.writeUInt8(peer.nodeType)
         w.writeUInt8(0) // flags
         w.writeInt8(0)  // out path len
         w.writeBytes(Data(repeating: 0, count: 64))
@@ -309,7 +368,8 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
 
     private func handleDirectMessage(_ frame: Data) {
         var r = BinaryReader(frame.dropFirst())
-        guard let _ = try? r.skip(2),               // txtType, attempt
+        guard let txtType = try? r.readUInt8(),
+              let _ = try? r.readUInt8(),           // attempt
               let _ = try? r.readUInt32(),          // timestamp
               let prefix = try? r.readBytes(6) else {
             respond(Data([MeshCore.Response.err.rawValue]))
@@ -331,14 +391,28 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
         confirm.writeUInt32(1800)
         respond(confirm.data, after: 1.5)
 
-        guard let peer = SimPeer.all.first(where: { $0.radioPublicKey.prefix(6) == prefix }) else { return }
+        guard let peer = SimPeer.allNodes.first(where: { $0.radioPublicKey.prefix(6) == prefix }) else { return }
+
+        // CLI command aimed at the repeater console.
+        if txtType == MeshCore.TextType.cliData.rawValue {
+            guard peer.nodeType == 2 else { return }
+            let reply: String
+            switch text.trimmingCharacters(in: .whitespaces).lowercased() {
+            case "ver": reply = "MeshCore v1.42 (demo build)"
+            case "clock": reply = "clock: \(Date().formatted(date: .omitted, time: .standard))"
+            case "advert": reply = "advert sent"
+            default: reply = "ok (demo repeater echoed: \(text.prefix(40)))"
+            }
+            queueIncomingDM(from: peer, text: reply, after: 2.0)
+            return
+        }
 
         // Fellship envelope chunk? Then it's invite plumbing; otherwise chat back.
         if FellshipEnvelope.isDirectEnvelope(text) {
             if let (type, body) = dmAssembler.ingest(senderHex: "app-user", text: text) {
                 handleEnvelopeDM(type: type, body: body, from: peer)
             }
-        } else {
+        } else if peer.nodeType == 1 {
             let reply = "Copy that! (\(peer.name), demo)"
             queueIncomingDM(from: peer, text: reply, after: 3.5)
         }

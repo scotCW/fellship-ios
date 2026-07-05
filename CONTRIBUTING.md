@@ -12,10 +12,15 @@ These come from the project's founding spec and are treated as invariants:
 2. **Stock MeshCore firmware only.** Nothing may require flashing modified
    firmware. Only use companion-protocol features that ship in current stock
    releases.
-3. **Local-first, no recovery.** Room data lives on members' devices, full
-   stop. Don't add backup/restore/export of room keys or history.
-4. **No IAP.** Donations stay an external link.
-5. **Honest background behavior.** Don't promise real-time background
+3. **Local-first.** Room data lives on members' devices, full stop. The only
+   sanctioned copy is the explicit, passphrase-encrypted, user-held backup in
+   Settings — never anything automatic, and never a cloud.
+4. **No IAP.** Donations stay a plain crypto address / external link.
+5. **Themes are free.** All of them, forever.
+6. **No GPL code.** The repo is public-domain (Unlicense); code from GPL
+   projects (including MeshCore One) cannot be copied in. Clean-room
+   reimplementation only.
+7. **Honest background behavior.** Don't promise real-time background
    detection; iOS doesn't offer it and neither do we.
 
 ## Practical notes

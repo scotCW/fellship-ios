@@ -11,10 +11,10 @@ struct FellshipApp: App {
                 .environmentObject(app)
                 .environmentObject(app.settings)
                 .environmentObject(app.engine)
+                .environmentObject(app.classic)
                 .environmentObject(app.location)
                 .environmentObject(app.notifications)
                 .environmentObject(app.offlineMaps)
-                .tint(Color("AccentColor"))
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {

@@ -16,9 +16,10 @@ lives on members' devices and travels radio-to-radio over the LoRa mesh.
 
 ## Highlights
 
-- **Geofenced rooms** — draw a circle, box, or freeform outline on the map;
-  every member's device checks its own GPS against the shared boundary and
-  announces entries/exits to the room.
+- **Geofenced rooms** — a circle (from meters to continent-scale, with a
+  user-set slider ceiling), a box, or a straight-line outline placed corner by
+  corner on the map; every member's device checks its own GPS against the
+  shared boundary and announces entries/exits to the room.
 - **Range-based rooms** — "the room is wherever the mesh reaches": perfect for
   convoys and trail groups. In-range is honest, fluctuating mesh reachability,
   not a fake geographic line.
@@ -44,8 +45,12 @@ lives on members' devices and travels radio-to-radio over the LoRa mesh.
   after", because that's what iOS actually delivers.
 - **Demo mode** — a fully simulated radio and three scripted companions, so
   you can explore every feature with no hardware.
-- **Local-first, no recovery** — deleting a room (or the app) destroys its
-  data permanently. This is a design guarantee, not a missing feature.
+- **Local-first** — deleting a room (or the app) destroys its data, and the
+  only copy that ever exists elsewhere is a backup you explicitly export,
+  encrypted with a passphrase only you know.
+- **Classic MeshCore mode** — one tap at the top switches to a traditional
+  companion-app workflow (channel chat, contacts, node tools) running
+  alongside Fellship on the same radio.
 
 ## Building
 
@@ -71,6 +76,7 @@ Fellship/
 │                   transports, session orchestration, Fellship envelope
 ├── Location/       Radio-first GPS service, SLC/region background monitor
 ├── Rooms/          RoomEngine: activation rule, presence, invites, chat
+├── Classic/        Clean-room classic MeshCore mode (channel, contacts, tools)
 ├── Notifications/  Local notifications only
 ├── Maps/           MapLibre canvas, tile sources, offline packs
 └── UI/             SwiftUI: map, rooms, chat, nearby, settings, onboarding
@@ -115,17 +121,41 @@ is how the app logic is exercised.
 ## For the app owner
 
 - Donations show a crypto address in-app (tap-to-copy + QR), configured via
-  `AppSettings.donationCryptoAddress` / `donationCryptoCurrency`. Update the
-  repo link in `SettingsView`. Note for App Store submission: review tends to
-  scrutinize donation mechanics (guideline 3.1.1) — be ready to explain that
-  this is a plain informational address with no payment plumbing.
+  `AppSettings.donationCryptoAddress` / `donationCryptoCurrency`. Note for App
+  Store submission: review tends to scrutinize donation mechanics (guideline
+  3.1.1) — be ready to explain that this is a plain informational address with
+  no payment plumbing.
 - App Review: the privacy disclosure lives in Settings → Privacy & your data;
   the "not a safety device" wording is there too. Review Section 13 of the
   spec before submitting.
 - Export compliance: the app uses standard encryption (CryptoKit) — answer
   Apple's encryption questions accordingly.
 
+## Classic MeshCore mode
+
+A switch at the top of the app flips between **Fellship** (rooms, zones, maps)
+and **MeshCore** — a classic companion-app workflow: public channel chat,
+contacts with favorites, direct messages with delivery status and retry,
+node telemetry (Cayenne LPP), repeater login and remote CLI, and radio tools
+(advert, rename, TX power). Both modes run simultaneously over the same radio
+connection.
+
+This mode is an independent, from-scratch implementation **inspired by
+[MeshCore One](https://github.com/Avi0n/MeshCoreOne)** by Avi0n. No MeshCore
+One code (GPLv3) is included. If you like that workflow, consider
+[supporting MeshCore One's developer](https://github.com/sponsors/Avi0n).
+
+## Backup & data persistence
+
+App data (rooms, keys, messages) lives in Application Support and the iOS
+Keychain, both of which survive app updates automatically. Settings →
+Back up & restore additionally exports a passphrase-encrypted file
+(PBKDF2-SHA256 + ChaCha20-Poly1305) containing rooms, room keys, members,
+messages and your identity — user-initiated, user-held, no cloud involved.
+This is an owner-approved amendment to the original spec's no-recovery rule.
+
 ## License
 
-MIT — see [LICENSE](LICENSE). Contributions welcome; see
-[CONTRIBUTING.md](CONTRIBUTING.md).
+Public domain — [The Unlicense](LICENSE). Do anything you like with it.
+Attribution appreciated but not required. See [PRIVACY.md](PRIVACY.md) for the
+privacy policy.

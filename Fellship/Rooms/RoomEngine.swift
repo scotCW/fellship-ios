@@ -491,6 +491,23 @@ final class RoomEngine: ObservableObject {
         }
     }
 
+    /// Resends a direct message that never got a mesh ack (flood retry).
+    func retryDirectMessage(_ message: RoomMessage) async {
+        guard message.scope == .direct, message.isFromMe,
+              let session, let peerKey = Data(hexEncoded: message.threadID) else { return }
+        updateDelivery(messageID: message.id, threadHint: message.threadID, to: .sent)
+        do {
+            let result = try await session.sendDirectText(message.text, to: peerKey, attempt: 1)
+            if result.expectedAckCRC != 0 {
+                pendingAcks[result.expectedAckCRC] = message.id
+                scheduleAckTimeout(messageID: message.id, ackCRC: result.expectedAckCRC,
+                                   after: TimeInterval(result.estimatedTimeoutMillis) / 1000)
+            }
+        } catch {
+            updateDelivery(messageID: message.id, threadHint: message.threadID, to: .timedOut)
+        }
+    }
+
     private func scheduleAckTimeout(messageID: String, ackCRC: UInt32, after seconds: TimeInterval) {
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(max(seconds, 5) * 1_000_000_000))

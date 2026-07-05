@@ -21,6 +21,8 @@ extension RoomEngine {
             }
         case .stateChanged, .selfInfoUpdated, .batteryUpdated, .deviceInfoUpdated:
             break // owned by AppState
+        case .loginResult, .statusResponse, .telemetry:
+            break // consumed by ClassicStore
         }
     }
 

@@ -24,8 +24,22 @@ struct ChatView: View {
                 ScrollView {
                     LazyVStack(spacing: 6) {
                         ForEach(messages) { message in
-                            MessageBubble(message: message)
-                                .id(message.id)
+                            VStack(alignment: .trailing, spacing: 2) {
+                                MessageBubble(message: message)
+                                if message.isFromMe, message.scope == .direct,
+                                   message.delivery == .timedOut {
+                                    Button {
+                                        Task { await engine.retryDirectMessage(message) }
+                                    } label: {
+                                        Label("Retry", systemImage: "arrow.clockwise")
+                                            .font(.caption2)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.mini)
+                                    .frame(maxWidth: .infinity, alignment: .trailing)
+                                }
+                            }
+                            .id(message.id)
                         }
                     }
                     .padding(.horizontal, 12)
