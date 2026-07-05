@@ -28,6 +28,17 @@ precisely so you can do this once at home and never again in the field.
 Everything else — presence, positions, messages, invites — travels
 **radio-to-radio over the LoRa mesh**, never over the internet.
 
+### One exception worth calling out: public-room discovery
+
+If you turn on **"Alert me about public rooms to join"** (off by default), your
+radio floods an "open to invite" advert so nearby public rooms can auto-invite
+you. Unlike room traffic, this advert is **not encrypted for members only** —
+it is broadcast in the clear to every radio in range, and it carries an
+**approximate** location (rounded to about 250 m). This is the one setting that
+lets your whereabouts leave the rooms you've joined, and it is independent of
+each room's location-sharing toggle. The app never puts your exact point in
+this advert. Leave the setting off if you don't want to be discoverable.
+
 ## What the developer receives
 
 Nothing. There is no server, no account system, no analytics, no crash

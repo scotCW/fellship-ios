@@ -393,8 +393,11 @@ final class RoomEngine: ObservableObject {
         lastBeaconAt = Date()
         if let fix, fix.source == .phone {
             // Radio has no usable GPS; push the phone position into the
-            // radio's advert so the beacon carries a location.
-            try? await session.setAdvertPosition(fix.coordinate)
+            // radio's advert so the beacon carries a location. The advert is
+            // an unencrypted, mesh-wide flood, so we deliberately coarsen the
+            // coordinate — public-room discovery only needs the neighborhood,
+            // and the app must never volunteer the exact point here.
+            try? await session.setAdvertPosition(fix.coordinate.coarsened(toMeters: 250))
         }
         try? await session.sendSelfAdvert(flood: true)
     }

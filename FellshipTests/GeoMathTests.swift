@@ -116,4 +116,27 @@ final class GeoMathTests: XCTestCase {
         XCTAssertFalse(Coordinate(latitude: 91, longitude: 0).isPlausible)
         XCTAssertTrue(park.isPlausible)
     }
+
+    func testCoarseningHidesExactPointButStaysNearby() {
+        let exact = Coordinate(latitude: 37.769423, longitude: -122.486201)
+        let coarse = exact.coarsened(toMeters: 250)
+        // The coarsened point must not equal the exact one…
+        XCTAssertNotEqual(coarse.latitude, exact.latitude)
+        XCTAssertNotEqual(coarse.longitude, exact.longitude)
+        // …but must stay within roughly one grid cell (protects the doorstep,
+        // still useful for neighborhood-level discovery).
+        XCTAssertLessThan(GeoMath.distanceMeters(exact, coarse), 260)
+        // Two nearby exact points snap to the same cell — no exact-position
+        // leakage through jitter.
+        let jitter = Coordinate(latitude: 37.769430, longitude: -122.486190)
+        XCTAssertEqual(exact.coarsened(toMeters: 250).latitude,
+                       jitter.coarsened(toMeters: 250).latitude, accuracy: 1e-9)
+    }
+
+    func testCoarseningIsStableAndGridAligned() {
+        // Snapping an already-snapped point returns the same point.
+        let c = Coordinate(latitude: 51.5, longitude: -0.12).coarsened(toMeters: 250)
+        XCTAssertEqual(c.latitude, c.coarsened(toMeters: 250).latitude, accuracy: 1e-9)
+        XCTAssertEqual(c.longitude, c.coarsened(toMeters: 250).longitude, accuracy: 1e-9)
+    }
 }

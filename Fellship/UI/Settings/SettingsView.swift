@@ -159,8 +159,10 @@ struct SettingsView: View {
     private var publicRoomsSection: some View {
         Section {
             Toggle("Alert me about public rooms to join", isOn: $settings.publicRoomAlerts)
+        } header: {
+            Text("Public room discovery")
         } footer: {
-            Text("When on, your radio periodically announces that you're open to invites — including your current position — at the update interval above. Members of a nearby active public room can then send you an invite, which you can accept or ignore.")
+            Text("When on, your radio floods an \u{201C}open to invite\u{201D} advert at the update interval so members of a nearby public room can auto-invite you.\n\nPrivacy: unlike room messages, this advert is broadcast in the clear to every radio in range — not just members — and it carries an approximate location (rounded to ~250 m). This is separate from each room's location-sharing setting and is the one place your whereabouts leave your rooms. Leave it off if you don't want to be discoverable.")
         }
     }
 
