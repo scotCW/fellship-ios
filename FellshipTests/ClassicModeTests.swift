@@ -65,6 +65,116 @@ final class ClassicModeTests: XCTestCase {
         XCTAssertEqual(lpp, Data([1, 0x74, 0x01, 0x91]))
     }
 
+    // MARK: - Diagnostics frames
+
+    func testTracePathFrameLayout() {
+        let path = Data([0x3A, 0x7F])
+        let frame = MeshCore.sendTracePathFrame(tag: 0x0403_0201, path: path)
+        XCTAssertEqual(frame[0], 36)
+        XCTAssertEqual(Array(frame[1..<5]), [0x01, 0x02, 0x03, 0x04]) // tag LE
+        XCTAssertEqual(Array(frame[5..<9]), [0, 0, 0, 0])             // auth
+        XCTAssertEqual(frame[9], 0)                                    // flags
+        XCTAssertEqual(Data(frame[10...]), path)
+    }
+
+    func testTraceDataPushParsing() {
+        var w = BinaryWriter()
+        w.writeUInt8(MeshCore.Push.traceData.rawValue)
+        w.writeUInt8(0)      // reserved
+        w.writeUInt8(2)      // path length
+        w.writeUInt8(0)      // flags
+        w.writeUInt32(77)    // tag
+        w.writeUInt32(0)     // auth
+        w.writeBytes(Data([0x3A, 0x7F]))
+        w.writeBytes(Data([UInt8(bitPattern: 30), UInt8(bitPattern: -6)])) // 7.5, -1.5 dB
+        w.writeInt8(26)      // final 6.5 dB
+        guard case .traceData(let result) = MeshCore.parseFrame(w.data) else {
+            return XCTFail("expected traceData")
+        }
+        XCTAssertEqual(result.tag, 77)
+        XCTAssertEqual(result.pathHashes, [0x3A, 0x7F])
+        XCTAssertEqual(result.pathSNRs, [7.5, -1.5])
+        XCTAssertEqual(result.finalSNR, 6.5)
+    }
+
+    func testStatsParsingAllTypes() {
+        var core = BinaryWriter()
+        core.writeUInt8(MeshCore.Response.stats.rawValue)
+        core.writeUInt8(0)
+        core.writeUInt16(4020)
+        core.writeUInt32(86_452)
+        core.writeUInt8(3)
+        guard case .stats(.core(let mv, let uptime, let queue)) = MeshCore.parseFrame(core.data) else {
+            return XCTFail("expected core stats")
+        }
+        XCTAssertEqual(mv, 4020)
+        XCTAssertEqual(uptime, 86_452)
+        XCTAssertEqual(queue, 3)
+
+        var radio = BinaryWriter()
+        radio.writeUInt8(MeshCore.Response.stats.rawValue)
+        radio.writeUInt8(1)
+        radio.writeUInt16(UInt16(bitPattern: -104))
+        radio.writeInt8(-62)
+        radio.writeInt8(38)
+        radio.writeUInt32(124)
+        radio.writeUInt32(3117)
+        guard case .stats(.radio(let noise, let rssi, let snr, let tx, let rx)) = MeshCore.parseFrame(radio.data) else {
+            return XCTFail("expected radio stats")
+        }
+        XCTAssertEqual(noise, -104)
+        XCTAssertEqual(rssi, -62)
+        XCTAssertEqual(snr, 9.5)
+        XCTAssertEqual(tx, 124)
+        XCTAssertEqual(rx, 3117)
+
+        var packets = BinaryWriter()
+        packets.writeUInt8(MeshCore.Response.stats.rawValue)
+        packets.writeUInt8(2)
+        for value in [10, 20, 5, 15, 7, 3] as [UInt32] { packets.writeUInt32(value) }
+        guard case .stats(.packets(let recv, _, _, _, _, _, let errors)) = MeshCore.parseFrame(packets.data) else {
+            return XCTFail("expected packet stats")
+        }
+        XCTAssertEqual(recv, 10)
+        XCTAssertNil(errors, "6-field variant has no error counter")
+    }
+
+    func testRxLogPushParsing() {
+        var w = BinaryWriter()
+        w.writeUInt8(MeshCore.Push.logRxData.rawValue)
+        w.writeInt8(30)   // SNR ×4 → 7.5
+        w.writeInt8(-70)
+        w.writeBytes(Data([1, 2, 3]))
+        guard case .rxLog(let entry) = MeshCore.parseFrame(w.data) else {
+            return XCTFail("expected rxLog")
+        }
+        XCTAssertEqual(entry.snr, 7.5)
+        XCTAssertEqual(entry.rssi, -70)
+        XCTAssertEqual(entry.payload, Data([1, 2, 3]))
+    }
+
+    func testContactOutPathCaptured() {
+        var w = BinaryWriter()
+        w.writeUInt8(MeshCore.Response.contact.rawValue)
+        w.writeBytes(Data(repeating: 0xCD, count: 32))
+        w.writeUInt8(2)   // repeater
+        w.writeUInt8(0)
+        w.writeInt8(3)    // 3-hop path
+        var path = Data([0xAA, 0xBB, 0xCC])
+        path.append(Data(repeating: 0, count: 61))
+        w.writeBytes(path)
+        w.writeCString("Ridge", fieldLength: 32)
+        w.writeUInt32(1_700_000_000)
+        w.writeInt32(37_000_000)
+        w.writeInt32(-122_000_000)
+        w.writeUInt32(1_700_000_100)
+        guard case .contact(let contact) = MeshCore.parseFrame(w.data) else {
+            return XCTFail("expected contact")
+        }
+        XCTAssertEqual(contact.outPath, Data([0xAA, 0xBB, 0xCC]))
+        XCTAssertEqual(contact.outPathLength, 3)
+    }
+
     // MARK: - Cayenne LPP decoding
 
     func testLPPDecodesVoltageAndTemperature() {

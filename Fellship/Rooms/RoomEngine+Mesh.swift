@@ -21,7 +21,7 @@ extension RoomEngine {
             }
         case .stateChanged, .selfInfoUpdated, .batteryUpdated, .deviceInfoUpdated:
             break // owned by AppState
-        case .loginResult, .statusResponse, .telemetry:
+        case .loginResult, .statusResponse, .telemetry, .traceCompleted, .packetReceived:
             break // consumed by ClassicStore
         }
     }
@@ -141,6 +141,12 @@ extension RoomEngine {
         }
 
         seenMessageIDs.insert(chat.messageID)
+        if seenMessageIDs.count > 8192 {
+            // Bound the dedupe window; worst case an ancient duplicate could
+            // reappear once after reset, which beats unbounded growth.
+            seenMessageIDs.removeAll()
+            seenMessageIDs.insert(chat.messageID)
+        }
         let senderID = resolveMemberID(chat.memberID, roomID: room.id)
         let senderName = displayName(forMemberID: senderID, roomID: room.id)
         let message = RoomMessage(id: chat.messageID,

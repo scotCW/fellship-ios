@@ -17,6 +17,18 @@ final class ClassicStore: ObservableObject {
     @Published private(set) var loginStates: [String: LoginState] = [:]
     /// Radio-key-prefix (12 hex) → latest telemetry readings.
     @Published private(set) var telemetry: [String: [CayenneLPP.Reading]] = [:]
+    /// Rolling raw-packet log (packet monitor), newest first, capped.
+    @Published private(set) var packetLog: [PacketLogRow] = []
+    @Published var packetLogPaused = false
+    /// Most recent route-probe result.
+    @Published private(set) var lastTrace: MeshCore.TraceResult?
+    @Published private(set) var traceInFlight = false
+
+    struct PacketLogRow: Identifiable, Equatable {
+        let id = UUID()
+        var receivedAt = Date()
+        var entry: MeshCore.RxLogEntry
+    }
     @Published var favorites: Set<String> {
         didSet { UserDefaults.standard.set(Array(favorites), forKey: "classicFavorites") }
     }
@@ -70,6 +82,15 @@ final class ClassicStore: ObservableObject {
             loginStates[prefix] = success ? .loggedIn : .failed
         case .telemetry(let prefix, let readings):
             telemetry[prefix] = readings
+        case .traceCompleted(let result):
+            traceInFlight = false
+            lastTrace = result
+        case .packetReceived(let entry):
+            guard !packetLogPaused else { return }
+            packetLog.insert(PacketLogRow(entry: entry), at: 0)
+            if packetLog.count > 200 {
+                packetLog.removeLast(packetLog.count - 200)
+            }
         default:
             break
         }
@@ -137,12 +158,49 @@ final class ClassicStore: ObservableObject {
         try? await session?.requestTelemetry(publicKey: contact.publicKey)
     }
 
+    /// Bumped when a CLI command echo is written, so terminal views refresh.
+    @Published private(set) var cliRevision = 0
+
     func sendCommand(_ command: String, to contact: MeshCore.Contact) async {
-        _ = try? await session?.sendCommand(command, to: contact.publicKey)
+        guard let session else { return }
+        // Echo the command into the console thread so the terminal reads
+        // like a terminal; the repeater's reply lands in the same thread.
+        let echo = RoomMessage(id: UUID().uuidString,
+                               threadID: contact.publicKey.hexEncoded,
+                               scope: .direct,
+                               senderID: "me",
+                               senderName: settings.displayName,
+                               text: "> \(command)",
+                               sentAt: Date(),
+                               delivery: .sent,
+                               isFromMe: true)
+        try? store.saveMessage(echo)
+        cliRevision += 1
+        _ = try? await session.sendCommand(command, to: contact.publicKey)
+    }
+
+    func consoleMessages(for contact: MeshCore.Contact) -> [RoomMessage] {
+        (try? store.messages(threadID: contact.publicKey.hexEncoded)) ?? []
     }
 
     func removeContact(_ contact: MeshCore.Contact) async {
         try? await session?.removeContact(publicKey: contact.publicKey)
+    }
+
+    /// Route probe along a contact's current out-path.
+    func tracePath(to contact: MeshCore.Contact) async {
+        guard let session else { return }
+        traceInFlight = true
+        lastTrace = nil
+        do {
+            _ = try await session.tracePath(path: contact.outPath)
+        } catch {
+            traceInFlight = false
+        }
+    }
+
+    func clearPacketLog() {
+        packetLog.removeAll()
     }
 
     func toggleFavorite(_ contactHex: String) {

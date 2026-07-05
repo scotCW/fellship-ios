@@ -292,6 +292,44 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
             w.writeBytes(SimPeer.repeater.radioPublicKey.prefix(6))
             w.writeBytes(Data(repeating: 0, count: 8)) // opaque stats blob
             respond(w.data, after: 1.5)
+        case .getStats:
+            var r = BinaryReader(frame.dropFirst())
+            let type = (try? r.readUInt8()) ?? 0
+            var w = BinaryWriter()
+            w.writeUInt8(MeshCore.Response.stats.rawValue)
+            w.writeUInt8(type)
+            switch type {
+            case 1: // radio
+                w.writeUInt16(UInt16(bitPattern: -104)) // noise floor dBm
+                w.writeInt8(-62)
+                w.writeInt8(38) // SNR 9.5 dB ×4
+                w.writeUInt32(124)
+                w.writeUInt32(3117)
+            case 2: // packets
+                for value in [1842, 311, 120, 191, 1500, 342, 7] as [UInt32] {
+                    w.writeUInt32(value)
+                }
+            default: // core
+                w.writeUInt16(4020)
+                w.writeUInt32(86_452)
+                w.writeUInt8(0)
+            }
+            respond(w.data)
+        case .sendTracePath:
+            var r = BinaryReader(frame.dropFirst())
+            let tag = (try? r.readUInt32()) ?? 0
+            respond(sentFrame())
+            var w = BinaryWriter()
+            w.writeUInt8(MeshCore.Push.traceData.rawValue)
+            w.writeUInt8(0)          // reserved
+            w.writeUInt8(2)          // 2 hops
+            w.writeUInt8(0)          // flags
+            w.writeUInt32(tag)
+            w.writeUInt32(0)         // auth
+            w.writeBytes(Data([0x3A, 0x7F]))       // hop hashes
+            w.writeBytes(Data([UInt8(bitPattern: 30), UInt8(bitPattern: 18)])) // 7.5, 4.5 dB
+            w.writeInt8(26)          // final SNR 6.5 dB
+            respond(w.data, after: 1.8)
         case .sendTelemetryReq:
             var r = BinaryReader(frame.dropFirst())
             _ = try? r.skip(3)
@@ -517,6 +555,15 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
                 }
             }
         }
+
+        // A raw-packet log entry per tick keeps the packet monitor alive.
+        var rx = BinaryWriter()
+        rx.writeUInt8(MeshCore.Push.logRxData.rawValue)
+        rx.writeInt8(Int8.random(in: 8...40))        // SNR ×4 (2–10 dB)
+        rx.writeInt8(Int8.random(in: -92 ... -55))   // RSSI dBm
+        rx.writeBytes(Data([0x11, UInt8.random(in: 0...255), 0x03,
+                            UInt8.random(in: 0...255), UInt8.random(in: 0...255)]))
+        respond(rx.data)
 
         // A friendly chat message every ~45 seconds.
         if Date().timeIntervalSince(lastChatAt) > 45 {

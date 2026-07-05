@@ -45,6 +45,8 @@ struct MapCanvas: UIViewRepresentable {
     /// When true, single taps report a coordinate (corner placement).
     var tapToPlaceEnabled = false
     var cameraTarget: CameraTarget?
+    /// Bump to rotate the camera back to north-up.
+    var northResetToken: UUID?
     var onMapTap: ((Coordinate) -> Void)?
     var onCameraIdle: ((Coordinate, Double) -> Void)?
 
@@ -94,6 +96,11 @@ struct MapCanvas: UIViewRepresentable {
                               zoomLevel: target.zoom, animated: target.animated)
         }
 
+        if let token = northResetToken, coordinator.appliedNorthToken != token {
+            coordinator.appliedNorthToken = token
+            mapView.resetNorth()
+        }
+
         coordinator.syncOverlays(on: mapView,
                                  markers: markers,
                                  boundaries: boundaries,
@@ -113,6 +120,7 @@ struct MapCanvas: UIViewRepresentable {
         var tapRecognizer: UITapGestureRecognizer?
         var appliedStyleURL: URL?
         var appliedCameraID: UUID?
+        var appliedNorthToken: UUID?
 
         /// Point annotation that carries its marker kind, so styling doesn't
         /// have to abuse title/subtitle fields.

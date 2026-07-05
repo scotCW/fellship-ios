@@ -13,6 +13,8 @@ enum MeshEvent: Sendable {
     case loginResult(senderPrefixHex: String, success: Bool)
     case statusResponse(senderPrefixHex: String, payload: Data)
     case telemetry(senderPrefixHex: String, readings: [CayenneLPP.Reading])
+    case traceCompleted(MeshCore.TraceResult)
+    case packetReceived(MeshCore.RxLogEntry)
 }
 
 /// Orchestrates one connected radio: serializes commands, correlates the
@@ -218,6 +220,21 @@ actor MeshSession {
         _ = try await request(MeshCore.sendTelemetryReqFrame(publicKey: publicKey), kind: .simple)
     }
 
+    func getStats(_ type: MeshCore.StatsType) async throws -> MeshCore.StatsPayload {
+        let events = try await request(MeshCore.getStatsFrame(type: type), kind: .simple)
+        guard case .stats(let payload)? = events.first else { throw SessionError.radioError }
+        return payload
+    }
+
+    /// Launches a hop-by-hop route probe; the reply arrives asynchronously as
+    /// a `.traceCompleted` event carrying the same tag.
+    @discardableResult
+    func tracePath(path: Data) async throws -> UInt32 {
+        let tag = UInt32.random(in: 1..<UInt32.max)
+        _ = try await request(MeshCore.sendTracePathFrame(tag: tag, path: path), kind: .simple)
+        return tag
+    }
+
     @discardableResult
     func sendChannelText(_ text: String, channelIndex: UInt8) async throws -> MeshCore.SendResult? {
         let frame = MeshCore.sendChannelTxtMsgFrame(text: text, channelIndex: channelIndex)
@@ -346,6 +363,10 @@ actor MeshSession {
         case .telemetryResponse(let prefix, let lppData):
             emit(.telemetry(senderPrefixHex: prefix.hexEncoded,
                             readings: CayenneLPP.decode(lppData)))
+        case .traceData(let result):
+            emit(.traceCompleted(result))
+        case .rxLog(let entry):
+            emit(.packetReceived(entry))
         // Unsolicited message frames can arrive outside a sync exchange on
         // some firmware; deliver them directly if no sync is pending.
         case .contactMessage(let message) where currentRequestKind != .nextMessage:

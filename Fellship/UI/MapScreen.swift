@@ -10,6 +10,7 @@ struct MapScreen: View {
 
     @State private var cameraTarget: CameraTarget?
     @State private var didInitialCenter = false
+    @State private var northResetToken: UUID?
 
     var body: some View {
         NavigationStack {
@@ -17,7 +18,8 @@ struct MapScreen: View {
                 MapCanvas(styleURL: app.mapStyle.style,
                           markers: markers,
                           boundaries: boundaries,
-                          cameraTarget: cameraTarget)
+                          cameraTarget: cameraTarget,
+                          northResetToken: northResetToken)
                     .ignoresSafeArea(edges: .top)
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -33,27 +35,15 @@ struct MapScreen: View {
                 .padding(12)
             }
             .overlay(alignment: .bottomTrailing) {
-                VStack(spacing: 10) {
-                    Button {
-                        centerOnMe()
-                    } label: {
-                        Image(systemName: "location")
-                            .frame(width: 40, height: 40)
-                            .background(.regularMaterial, in: Circle())
-                    }
-                    if let room = firstBoundedRoom {
-                        Button {
-                            center(on: room)
-                        } label: {
-                            Image(systemName: "square.dashed")
-                                .frame(width: 40, height: 40)
-                                .background(.regularMaterial, in: Circle())
-                        }
-                        .accessibilityLabel("Center on \(room.name)")
-                    }
-                }
-                .padding(16)
-                .padding(.bottom, 24)
+                MapSideControls(
+                    onResetNorth: { northResetToken = UUID() },
+                    onRecenter: { centerOnMe() },
+                    extra: firstBoundedRoom.map { room in
+                        (icon: "square.dashed", label: "Center on \(room.name)",
+                         action: { center(on: room) })
+                    })
+                    .padding(16)
+                    .padding(.bottom, 24)
             }
             .navigationTitle("Map")
             .navigationBarTitleDisplayMode(.inline)

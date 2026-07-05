@@ -12,21 +12,43 @@ struct ClassicRootView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            ClassicChannelView()
-                .tabItem { Label("Channel", systemImage: "megaphone") }
+            ClassicMessagesView()
+                .tabItem { Label("Chats", systemImage: "message") }
                 .tag(0)
-            ClassicChatsView()
-                .tabItem { Label("Messages", systemImage: "message") }
+            ClassicNodesView()
+                .tabItem { Label("Nodes", systemImage: "person.2") }
                 .tag(1)
-            ClassicContactsView()
-                .tabItem { Label("Contacts", systemImage: "person.2") }
+            ClassicMapView()
+                .tabItem { Label("Map", systemImage: "map") }
                 .tag(2)
-            ClassicRadioView()
-                .tabItem { Label("Radio", systemImage: "antenna.radiowaves.left.and.right") }
+            ClassicToolsView()
+                .tabItem { Label("Tools", systemImage: "wrench.and.screwdriver") }
                 .tag(3)
             ClassicAboutView()
                 .tabItem { Label("About", systemImage: "info.circle") }
                 .tag(4)
+        }
+    }
+}
+
+/// Channel chat and direct messages in one tab, a segment apart.
+struct ClassicMessagesView: View {
+    @State private var segment = 0
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("Kind", selection: $segment) {
+                Text("Public channel").tag(0)
+                Text("Direct").tag(1)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            if segment == 0 {
+                ClassicChannelView()
+            } else {
+                ClassicChatsView()
+            }
         }
     }
 }

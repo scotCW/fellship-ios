@@ -31,7 +31,9 @@ enum MeshCore {
         case sendStatusReq = 27
         case getChannel = 31
         case setChannel = 32
+        case sendTracePath = 36
         case sendTelemetryReq = 39
+        case getStats = 56
     }
 
     enum Response: UInt8 {
@@ -49,6 +51,7 @@ enum MeshCore {
         case batteryVoltage = 12
         case deviceInfo = 13
         case channelInfo = 18
+        case stats = 24
     }
 
     enum Push: UInt8 {
@@ -59,8 +62,16 @@ enum MeshCore {
         case loginSuccess = 0x85
         case loginFail = 0x86
         case statusResponse = 0x87
+        case logRxData = 0x88
+        case traceData = 0x89
         case newAdvert = 0x8A
         case telemetryResponse = 0x8B
+    }
+
+    enum StatsType: UInt8 {
+        case core = 0
+        case radio = 1
+        case packets = 2
     }
 
     enum TextType: UInt8 {
@@ -175,6 +186,22 @@ enum MeshCore {
         return w.data
     }
 
+    /// Trace a route hop by hop. `path` is the known out-path hash bytes for
+    /// the destination (empty = probe direct neighbors / flood).
+    static func sendTracePathFrame(tag: UInt32, path: Data) -> Data {
+        var w = BinaryWriter()
+        w.writeUInt8(Command.sendTracePath.rawValue)
+        w.writeUInt32(tag)
+        w.writeUInt32(0) // auth
+        w.writeUInt8(0)  // flags
+        w.writeBytes(path)
+        return w.data
+    }
+
+    static func getStatsFrame(type: StatsType) -> Data {
+        Data([Command.getStats.rawValue, type.rawValue])
+    }
+
     static func sendTelemetryReqFrame(publicKey: Data) -> Data {
         var w = BinaryWriter()
         w.writeUInt8(Command.sendTelemetryReq.rawValue)
@@ -216,6 +243,9 @@ enum MeshCore {
         var type: UInt8
         var flags: UInt8
         var outPathLength: Int8
+        /// The routing path (node hash bytes) currently used to reach this
+        /// contact — what trace-path probes hop along.
+        var outPath: Data
         var name: String
         var lastAdvert: Date
         var coordinate: Coordinate
@@ -256,6 +286,31 @@ enum MeshCore {
         var manufacturerModel: String
     }
 
+    enum StatsPayload: Equatable, Sendable {
+        case core(batteryMilliVolts: UInt16, uptimeSeconds: UInt32, queueLength: UInt8)
+        case radio(noiseFloor: Int16, lastRSSI: Int8, lastSNR: Double,
+                   txAirSeconds: UInt32, rxAirSeconds: UInt32)
+        case packets(received: UInt32, sent: UInt32, sentFlood: UInt32,
+                     sentDirect: UInt32, receivedFlood: UInt32,
+                     receivedDirect: UInt32, receiveErrors: UInt32?)
+    }
+
+    /// One hop-by-hop route probe result.
+    struct TraceResult: Equatable, Sendable {
+        var tag: UInt32
+        var pathHashes: [UInt8]
+        /// SNR in dB at each hop, same order as `pathHashes`.
+        var pathSNRs: [Double]
+        var finalSNR: Double
+    }
+
+    /// A raw received-packet log entry (packet monitor).
+    struct RxLogEntry: Equatable, Sendable {
+        var snr: Double
+        var rssi: Int8
+        var payload: Data
+    }
+
     enum Event: Sendable {
         case ok
         case error
@@ -278,6 +333,9 @@ enum MeshCore {
         case loginResult(senderPrefix: Data, success: Bool)
         case statusResponse(senderPrefix: Data, payload: Data)
         case telemetryResponse(senderPrefix: Data, lppData: Data)
+        case stats(StatsPayload)
+        case traceData(TraceResult)
+        case rxLog(RxLogEntry)
         case unknown(code: UInt8, payload: Data)
     }
 
@@ -327,6 +385,8 @@ enum MeshCore {
                     return .channelInfo(ChannelInfo(index: try r.readUInt8(),
                                                     name: try r.readCString(fieldLength: 32),
                                                     secret: try r.readBytes(min(16, r.remainingCount))))
+                case .stats:
+                    return .stats(try parseStats(&r))
                 }
             }
             if let push = Push(rawValue: code) {
@@ -349,6 +409,25 @@ enum MeshCore {
                     let prefix = try r.readBytes(6)
                     return .statusResponse(senderPrefix: prefix,
                                            payload: try r.readBytes(r.remainingCount))
+                case .logRxData:
+                    let snr = Double(try r.readInt8()) / 4
+                    let rssi = try r.readInt8()
+                    return .rxLog(RxLogEntry(snr: snr, rssi: rssi,
+                                             payload: try r.readBytes(r.remainingCount)))
+                case .traceData:
+                    try r.skip(1) // reserved
+                    let pathLen = Int(try r.readUInt8())
+                    try r.skip(1) // flags
+                    let tag = try r.readUInt32()
+                    _ = try r.readUInt32() // auth code
+                    let hashes = try r.readBytes(pathLen)
+                    let snrs = try r.readBytes(pathLen)
+                    let finalSNR = Double(try r.readInt8()) / 4
+                    return .traceData(TraceResult(
+                        tag: tag,
+                        pathHashes: Array(hashes),
+                        pathSNRs: snrs.map { Double(Int8(bitPattern: $0)) / 4 },
+                        finalSNR: finalSNR))
                 case .telemetryResponse:
                     try r.skip(1)
                     let prefix = try r.readBytes(6)
@@ -387,12 +466,43 @@ enum MeshCore {
                         name: r.readStringToEnd())
     }
 
+    private static func parseStats(_ r: inout BinaryReader) throws -> StatsPayload {
+        let type = try r.readUInt8()
+        switch StatsType(rawValue: type) {
+        case .core:
+            return .core(batteryMilliVolts: try r.readUInt16(),
+                         uptimeSeconds: try r.readUInt32(),
+                         queueLength: try r.readUInt8())
+        case .radio:
+            let noise = Int16(bitPattern: try r.readUInt16())
+            let rssi = try r.readInt8()
+            let snr = Double(try r.readInt8()) / 4
+            return .radio(noiseFloor: noise, lastRSSI: rssi, lastSNR: snr,
+                          txAirSeconds: try r.readUInt32(),
+                          rxAirSeconds: try r.readUInt32())
+        case .packets:
+            let recv = try r.readUInt32()
+            let sent = try r.readUInt32()
+            let sentFlood = try r.readUInt32()
+            let sentDirect = try r.readUInt32()
+            let recvFlood = try r.readUInt32()
+            let recvDirect = try r.readUInt32()
+            let errors = r.remainingCount >= 4 ? try r.readUInt32() : nil
+            return .packets(received: recv, sent: sent, sentFlood: sentFlood,
+                            sentDirect: sentDirect, receivedFlood: recvFlood,
+                            receivedDirect: recvDirect, receiveErrors: errors)
+        case nil:
+            throw BinaryReader.ReaderError.outOfBounds
+        }
+    }
+
     private static func parseContact(_ r: inout BinaryReader) throws -> Contact {
         let publicKey = try r.readBytes(32)
         let type = try r.readUInt8()
         let flags = try r.readUInt8()
         let outPathLength = try r.readInt8()
-        try r.skip(64) // out path
+        let rawPath = try r.readBytes(64)
+        let outPath = outPathLength > 0 ? rawPath.prefix(Int(min(outPathLength, 64))) : Data()
         let name = try r.readCString(fieldLength: 32)
         let lastAdvert = Date(timeIntervalSince1970: TimeInterval(try r.readUInt32()))
         let lat = try r.readInt32()
@@ -402,6 +512,7 @@ enum MeshCore {
                        type: type,
                        flags: flags,
                        outPathLength: outPathLength,
+                       outPath: Data(outPath),
                        name: name,
                        lastAdvert: lastAdvert,
                        coordinate: Coordinate(microdegreesLat: lat, microdegreesLon: lon),
