@@ -23,6 +23,9 @@ final class ClassicStore: ObservableObject {
     /// Most recent route-probe result.
     @Published private(set) var lastTrace: MeshCore.TraceResult?
     @Published private(set) var traceInFlight = false
+    /// Tag of the probe we're currently waiting on, so a stale reply from an
+    /// earlier trace can't clobber a newer result.
+    private var expectedTraceTag: UInt32?
 
     struct PacketLogRow: Identifiable, Equatable {
         let id = UUID()
@@ -83,6 +86,9 @@ final class ClassicStore: ObservableObject {
         case .telemetry(let prefix, let readings):
             telemetry[prefix] = readings
         case .traceCompleted(let result):
+            // Ignore replies from a probe we're no longer waiting on.
+            guard expectedTraceTag == nil || result.tag == expectedTraceTag else { return }
+            expectedTraceTag = nil
             traceInFlight = false
             lastTrace = result
         case .packetReceived(let entry):
@@ -193,8 +199,18 @@ final class ClassicStore: ObservableObject {
         traceInFlight = true
         lastTrace = nil
         do {
-            _ = try await session.tracePath(path: contact.outPath)
+            expectedTraceTag = try await session.tracePath(path: contact.outPath)
+            // A route probe can go unanswered on a lossy mesh — don't spin
+            // forever.
+            let tag = expectedTraceTag
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 20_000_000_000)
+                guard let self, self.expectedTraceTag == tag else { return }
+                self.expectedTraceTag = nil
+                self.traceInFlight = false
+            }
         } catch {
+            expectedTraceTag = nil
             traceInFlight = false
         }
     }
