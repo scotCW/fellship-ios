@@ -1,0 +1,53 @@
+name: Feature request
+description: Suggest an improvement or new capability.
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before suggesting, please skim the project's hard constraints in
+        [AGENTS.md](../blob/master/AGENTS.md) — features that require a backend,
+        a paid API billed to the owner, custom firmware, or GPL code can't be
+        accepted, by design.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: The user need or scenario, not just the proposed solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Rooms / zones (Fellship mode)
+        - Messaging
+        - Maps / offline
+        - Classic MeshCore mode
+        - Radio / protocol
+        - Settings / backup / privacy
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints check
+      options:
+        - label: This does not require a backend, cloud sync, or push server.
+          required: true
+        - label: This does not require custom/modified MeshCore firmware.
+          required: true
+        - label: This does not require a paid API billed to the app owner.
+          required: true

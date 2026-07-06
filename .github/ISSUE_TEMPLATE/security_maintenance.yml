@@ -1,0 +1,59 @@
+name: Security / CVE / maintenance
+description: A dependency CVE, an Apple/toolchain change, or a vulnerability in Fellship itself.
+labels: ["security", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ⚠️ **For a vulnerability in Fellship itself that could put users at risk,
+        please avoid full public details here.** Open a minimal placeholder and
+        use GitHub's private vulnerability reporting (Security → Report a
+        vulnerability) so a fix can land before disclosure.
+
+        Use this template for tracking dependency CVEs, Apple/Xcode/SDK changes,
+        and routine security upkeep.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - CVE in a dependency (MapLibre / SPM / toolchain)
+        - Apple change (Xcode, Swift, iOS SDK, App Store policy)
+        - Vulnerability in Fellship's own code
+        - Routine maintenance
+    validations:
+      required: true
+
+  - type: input
+    id: identifier
+    attributes:
+      label: CVE / advisory / reference
+      placeholder: "e.g. CVE-2026-xxxxx, GHSA-xxxx, or a changelog link"
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description & impact
+      description: What is affected, and how does it impact Fellship or its users?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity (your estimate)
+      options:
+        - Critical
+        - High
+        - Medium
+        - Low
+        - Informational
+    validations:
+      required: true
+
+  - type: textarea
+    id: remediation
+    attributes:
+      label: Proposed remediation
+      description: Version bump, code change, config change, or "needs investigation".

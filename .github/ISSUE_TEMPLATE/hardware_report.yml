@@ -1,0 +1,79 @@
+name: Hardware report
+description: Report how Fellship behaves against a real MeshCore radio (very welcome!).
+labels: ["hardware", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The BLE layer implements the documented MeshCore companion protocol and
+        is unit-tested against those frame layouts, but has **not been verified
+        against physical radios**. Reports from real hardware — working *or*
+        broken — are the single most valuable contribution right now. Thank you.
+
+  - type: input
+    id: board
+    attributes:
+      label: Board
+      placeholder: "e.g. Heltec LoRa32 V3, LilyGO T-Beam, RAK WisBlock 4631"
+    validations:
+      required: true
+
+  - type: input
+    id: firmware
+    attributes:
+      label: MeshCore firmware version
+      placeholder: "e.g. 1.x.x (stock, unmodified)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: Overall outcome
+      options:
+        - Works fully
+        - Works partially (details below)
+        - Pairs but no data
+        - Won't pair
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: features
+    attributes:
+      label: What did you verify?
+      options:
+        - label: BLE pairing / connection
+        - label: Reading radio GPS position
+        - label: Battery / telemetry
+        - label: Sending & receiving room messages
+        - label: Zone entry/exit detection
+        - label: Invites (private and/or public auto-invite)
+        - label: Classic mode — channel chat
+        - label: Classic mode — node tools (advert, TX power, trace, telemetry)
+
+  - type: textarea
+    id: details
+    attributes:
+      label: What worked and what didn't
+      description: Be as specific as you can. Include unexpected behavior, delays, or drops.
+    validations:
+      required: true
+
+  - type: textarea
+    id: frames
+    attributes:
+      label: Frames that failed to parse
+      description: >
+        If something didn't work, the Xcode console logs raw/unknown frames as
+        hex. Pasting those is enormously helpful for fixing hardware-specific
+        quirks.
+      render: text
+
+  - type: input
+    id: ios
+    attributes:
+      label: iOS version + iPhone model
+      placeholder: "e.g. iOS 26.3, iPhone 14"
+    validations:
+      required: true

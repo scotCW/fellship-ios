@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/scotCW/fellship-ios/security/advisories/new
+    about: >
+      For a vulnerability that could put users at risk, please report it
+      privately here instead of opening a public issue, so a fix can land
+      before disclosure.
+  - name: Read the project guide (AGENTS.md)
+    url: https://github.com/scotCW/fellship-ios/blob/master/AGENTS.md
+    about: Build/test commands, constraints, and architecture before contributing.

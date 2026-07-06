@@ -1,0 +1,90 @@
+name: Bug report
+description: Something isn't working as expected in the app.
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Fellship is local-first with
+        no servers, so please include as much on-device detail as you safely can.
+        **Never paste room keys, backup passphrases, or private coordinates.**
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+      placeholder: "When I ... I expected ... but instead ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Tap ...
+        3. See ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Which mode?
+      options:
+        - Fellship (rooms)
+        - MeshCore (classic)
+        - Both / not sure
+        - Demo mode
+    validations:
+      required: true
+
+  - type: dropdown
+    id: radio
+    attributes:
+      label: Radio in use
+      description: The BLE layer is not yet verified on physical hardware, so this matters a lot.
+      options:
+        - Demo mode (no radio)
+        - Heltec LoRa32
+        - LilyGO T-Beam
+        - RAK WisBlock
+        - Other MeshCore-compatible board (note in description)
+    validations:
+      required: true
+
+  - type: input
+    id: firmware
+    attributes:
+      label: MeshCore firmware version
+      description: If using a real radio. Find it under Tools → Radio statistics, or the node's About.
+      placeholder: "e.g. 1.x.x"
+
+  - type: input
+    id: ios
+    attributes:
+      label: iOS version + device
+      placeholder: "e.g. iOS 26.3, iPhone 15 Pro"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console logs / frame dumps
+      description: >
+        For protocol issues, the Xcode console logs unparsed frames as hex.
+        Paste any relevant output (with any personal data removed).
+      render: text
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have not included any room keys, passphrases, or private locations.
+          required: true
+        - label: I searched existing issues and this isn't a duplicate.
+          required: true
