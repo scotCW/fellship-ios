@@ -93,14 +93,6 @@ and cooperate over one radio: `RoomEngine` (Fellship rooms) and `ClassicStore`
 - All untrusted mesh input must decode without crashing (`try?` / guarded
   `BinaryReader`) and growth-prone collections must be capped.
 - Keep UI copy plain and honest.
-
-## Working with the GitHub repo
-
-- Repo: **scotCW/fellship-ios** (private). Default branch: **master**.
-- Commit author: `scotSW <299917302+scotCW@users.noreply.github.com>` — use this
-  exact identity so no personal email is exposed.
-- Versioning: SemVer. Bump `MARKETING_VERSION` (and `CURRENT_PROJECT_VERSION`
-  for App Store uploads), update `CHANGELOG.md`, tag `vX.Y.Z`, cut a Release.
-- Maintenance credential lives in the macOS Keychain, never in a file. Never
-  write tokens to `.git/config`; use them inline in the push URL and keep them
-  out of command output.
+- Versioning is SemVer: bump `MARKETING_VERSION` (and `CURRENT_PROJECT_VERSION`
+  for App Store uploads), update `CHANGELOG.md`, tag `vX.Y.Z`, and cut a
+  release.
