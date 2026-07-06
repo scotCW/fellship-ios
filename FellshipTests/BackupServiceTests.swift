@@ -12,7 +12,7 @@ final class BackupServiceTests: XCTestCase {
                         sharesPreciseLocation: true, isMuted: false,
                         createdAt: Date(), creatorID: "me")
         return BackupService.Payload(
-            displayName: "Frosty",
+            displayName: "Alex",
             identityKey: Curve25519.KeyAgreement.PrivateKey().rawRepresentation,
             rooms: [room],
             membersByRoom: [room.id: [Member(id: "m1", displayName: "Robin",
@@ -32,7 +32,7 @@ final class BackupServiceTests: XCTestCase {
         XCTAssertEqual(restored.roomKeys, payload.roomKeys)
         XCTAssertEqual(restored.identityKey, payload.identityKey)
         XCTAssertEqual(restored.messages.count, 1)
-        XCTAssertEqual(restored.displayName, "Frosty")
+        XCTAssertEqual(restored.displayName, "Alex")
     }
 
     func testWrongPassphraseRejected() throws {
