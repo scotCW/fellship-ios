@@ -7,7 +7,12 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- MeshCore (classic) mode: full contact management matching the MeshCore One
+  workflow — add/import a contact and save it to the radio's persistent list,
+  share a node or your own contact card as a QR code, reset a contact's
+  routing path, and share a contact over the mesh. Contacts continue to live
+  in the radio's own memory and sync across both modes.
 
 ## [1.0.0] — 2026-07-06
 
