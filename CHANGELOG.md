@@ -7,12 +7,19 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-07-07
+
 ### Added
 - MeshCore (classic) mode: full contact management matching the MeshCore One
   workflow — add/import a contact and save it to the radio's persistent list,
   share a node or your own contact card as a QR code, reset a contact's
   routing path, and share a contact over the mesh. Contacts continue to live
   in the radio's own memory and sync across both modes.
+
+### Fixed
+- Nodes screen: the "add contact" toolbar action could be dropped by SwiftUI
+  when combined with search; consolidated node actions into a single reliable
+  menu and added Add/Share buttons to the empty state.
 
 ## [1.0.0] — 2026-07-06
 
@@ -70,5 +77,6 @@ First release.
   loses its slot until active again.
 - Room messages are capped at 120 characters (LoRa frame budget).
 
-[Unreleased]: https://github.com/scotCW/fellship-ios/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/scotCW/fellship-ios/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/scotCW/fellship-ios/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/scotCW/fellship-ios/releases/tag/v1.0.0
