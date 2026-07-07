@@ -21,10 +21,15 @@ enum MeshCore {
         case setDeviceTime = 6
         case sendSelfAdvert = 7
         case setAdvertName = 8
+        case addUpdateContact = 9
         case syncNextMessage = 10
         case setTxPower = 12
+        case resetPath = 13
         case setAdvertLatLon = 14
         case removeContact = 15
+        case shareContact = 16
+        case exportContact = 17
+        case importContact = 18
         case getBatteryVoltage = 20
         case deviceQuery = 22
         case sendLogin = 26
@@ -166,8 +171,67 @@ enum MeshCore {
     static func removeContactFrame(publicKey: Data) -> Data {
         var w = BinaryWriter()
         w.writeUInt8(Command.removeContact.rawValue)
-        w.writeBytes(publicKey.prefix(32))
+        w.writeBytes(pad(publicKey, to: 32))
         return w.data
+    }
+
+    /// Writes (adds or updates) a contact in the radio's own persistent
+    /// contact list. This is how a contact becomes durable — the radio, not
+    /// the app, is the store of record.
+    static func addUpdateContactFrame(publicKey: Data, type: UInt8, flags: UInt8,
+                                      outPathLength: Int8, outPath: Data,
+                                      name: String, lastAdvert: Date,
+                                      coordinate: Coordinate) -> Data {
+        var w = BinaryWriter()
+        w.writeUInt8(Command.addUpdateContact.rawValue)
+        w.writeBytes(pad(publicKey, to: 32))
+        w.writeUInt8(type)
+        w.writeUInt8(flags)
+        w.writeInt8(outPathLength)
+        w.writeBytes(pad(outPath, to: 64))
+        w.writeCString(name, fieldLength: 32)
+        w.writeUInt32(UInt32(clamping: Int(lastAdvert.timeIntervalSince1970)))
+        w.writeInt32(coordinate.microdegreesLat)
+        w.writeInt32(coordinate.microdegreesLon)
+        return w.data
+    }
+
+    static func resetPathFrame(publicKey: Data) -> Data {
+        var w = BinaryWriter()
+        w.writeUInt8(Command.resetPath.rawValue)
+        w.writeBytes(pad(publicKey, to: 32))
+        return w.data
+    }
+
+    /// Asks the radio to re-broadcast a contact over the mesh so nearby nodes
+    /// can pick it up.
+    static func shareContactFrame(publicKey: Data) -> Data {
+        var w = BinaryWriter()
+        w.writeUInt8(Command.shareContact.rawValue)
+        w.writeBytes(pad(publicKey, to: 32))
+        return w.data
+    }
+
+    /// Exports a contact's advert blob (or, with no key, the radio's own
+    /// identity) for out-of-band sharing.
+    static func exportContactFrame(publicKey: Data?) -> Data {
+        var w = BinaryWriter()
+        w.writeUInt8(Command.exportContact.rawValue)
+        if let publicKey { w.writeBytes(pad(publicKey, to: 32)) }
+        return w.data
+    }
+
+    static func importContactFrame(advertPacket: Data) -> Data {
+        var w = BinaryWriter()
+        w.writeUInt8(Command.importContact.rawValue)
+        w.writeBytes(advertPacket)
+        return w.data
+    }
+
+    /// Right-pads (or truncates) to an exact fixed width.
+    private static func pad(_ data: Data, to length: Int) -> Data {
+        if data.count >= length { return data.prefix(length) }
+        return data + Data(count: length - data.count)
     }
 
     /// Authenticate against a repeater/room server (max 15-char password).

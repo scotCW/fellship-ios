@@ -193,6 +193,44 @@ final class ClassicStore: ObservableObject {
         try? await session?.removeContact(publicKey: contact.publicKey)
     }
 
+    /// Adds/updates a contact in the radio's persistent list. Returns nil on
+    /// success, or a human error message.
+    func addContact(_ contact: MeshCore.Contact) async -> String? {
+        guard let session else { return "Connect a radio first." }
+        do {
+            try await session.addUpdateContact(contact)
+            await engineRefresh()
+            return nil
+        } catch {
+            return "The radio rejected that contact."
+        }
+    }
+
+    /// Imports a scanned/pasted contact card and saves it to the radio.
+    func importContactCard(_ payload: String) async -> String? {
+        guard let contact = ContactCard.decode(payload) else {
+            return "That isn't a valid contact code."
+        }
+        return await addContact(contact)
+    }
+
+    func resetPath(to contact: MeshCore.Contact) async {
+        try? await session?.resetPath(publicKey: contact.publicKey)
+    }
+
+    func shareOverMesh(_ contact: MeshCore.Contact) async {
+        try? await session?.shareContact(publicKey: contact.publicKey)
+    }
+
+    private func engineRefresh() async {
+        // ClassicStore doesn't own the contact list (RoomEngine does); ask it
+        // to re-pull from the radio so the new contact appears in both modes.
+        await onContactsChanged?()
+    }
+
+    /// Set by AppState to bridge a radio-contacts refresh back to RoomEngine.
+    var onContactsChanged: (() async -> Void)?
+
     /// Route probe along a contact's current out-path.
     func tracePath(to contact: MeshCore.Contact) async {
         guard let session else { return }

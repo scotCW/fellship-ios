@@ -175,6 +175,74 @@ final class ClassicModeTests: XCTestCase {
         XCTAssertEqual(contact.outPathLength, 3)
     }
 
+    // MARK: - Contact management frames
+
+    func testAddUpdateContactFrameLayout() {
+        let key = Data((0..<32).map { UInt8($0) })
+        let path = Data([0xAA, 0xBB])
+        let frame = MeshCore.addUpdateContactFrame(
+            publicKey: key, type: 1, flags: 0, outPathLength: 2, outPath: path,
+            name: "Robin", lastAdvert: Date(timeIntervalSince1970: 0x04030201),
+            coordinate: Coordinate(latitude: 1.5, longitude: -2.25))
+        XCTAssertEqual(frame.count, 1 + 32 + 1 + 1 + 1 + 64 + 32 + 4 + 4 + 4) // 144
+        XCTAssertEqual(frame[0], 9)
+        XCTAssertEqual(Data(frame[1..<33]), key)
+        XCTAssertEqual(frame[33], 1)  // type
+        XCTAssertEqual(frame[34], 0)  // flags
+        XCTAssertEqual(Int8(bitPattern: frame[35]), 2) // outPathLen
+        // out path padded to 64
+        XCTAssertEqual(frame[36], 0xAA)
+        XCTAssertEqual(frame[37], 0xBB)
+        XCTAssertEqual(frame[38], 0)
+    }
+
+    func testResetShareExportImportFrames() {
+        let key = Data(repeating: 7, count: 32)
+        XCTAssertEqual(MeshCore.resetPathFrame(publicKey: key)[0], 13)
+        XCTAssertEqual(MeshCore.resetPathFrame(publicKey: key).count, 33)
+        XCTAssertEqual(MeshCore.shareContactFrame(publicKey: key)[0], 16)
+        XCTAssertEqual(MeshCore.exportContactFrame(publicKey: key)[0], 17)
+        XCTAssertEqual(MeshCore.exportContactFrame(publicKey: key).count, 33)
+        XCTAssertEqual(MeshCore.exportContactFrame(publicKey: nil).count, 1, "self export omits key")
+        let imp = MeshCore.importContactFrame(advertPacket: Data([1, 2, 3]))
+        XCTAssertEqual(imp[0], 18)
+        XCTAssertEqual(Data(imp.dropFirst()), Data([1, 2, 3]))
+    }
+
+    func testShortPublicKeyPaddedToFixedWidth() {
+        // A too-short key must still yield a valid 33-byte frame (padded).
+        let frame = MeshCore.removeContactFrame(publicKey: Data([1, 2, 3]))
+        XCTAssertEqual(frame.count, 33)
+        XCTAssertEqual(frame[1], 1)
+        XCTAssertEqual(frame[4], 0) // padded
+    }
+
+    // MARK: - Contact card (QR) round-trip
+
+    func testContactCardRoundTrip() {
+        let key = Data((0..<32).map { UInt8($0 &* 3 &+ 1) })
+        let card = ContactCard.encode(publicKey: key, type: 2, flags: 1,
+                                      name: "Ridge Repeater",
+                                      coordinate: Coordinate(latitude: 37.7694, longitude: -122.4862))
+        XCTAssertTrue(card.hasPrefix("MCC1:"))
+        let decoded = ContactCard.decode(card)
+        XCTAssertEqual(decoded?.publicKey, key)
+        XCTAssertEqual(decoded?.type, 2)
+        XCTAssertEqual(decoded?.flags, 1)
+        XCTAssertEqual(decoded?.name, "Ridge Repeater")
+        XCTAssertEqual(decoded?.coordinate.latitude ?? 0, 37.7694, accuracy: 0.00001)
+        XCTAssertEqual(decoded?.coordinate.longitude ?? 0, -122.4862, accuracy: 0.00001)
+        // Imported contact has unknown route so the radio re-discovers it.
+        XCTAssertEqual(decoded?.outPathLength, -1)
+    }
+
+    func testContactCardRejectsGarbage() {
+        XCTAssertNil(ContactCard.decode("not a card"))
+        XCTAssertNil(ContactCard.decode("MCC1:%%%notbase64%%%"))
+        XCTAssertNil(ContactCard.decode("MCC1:AAAA")) // too short
+        XCTAssertNil(ContactCard.decode(""))
+    }
+
     // MARK: - Cayenne LPP decoding
 
     func testLPPDecodesVoltageAndTemperature() {

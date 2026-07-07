@@ -138,6 +138,9 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
     private var chatCursor = Int.random(in: 0..<5)
     private var inviteSent = false
     private var removedContacts: Set<String> = []
+    /// Contacts written via AddUpdateContact, keyed by full public key, so the
+    /// demo radio persists them across getContacts calls like real hardware.
+    private var addedContacts: [Data: Data] = [:] // publicKey -> full contact frame
     private var peerInsideFlags: [String: Bool] = [:]
     private var queuedMessages: [Data] = [] // frames waiting behind msgWaiting
     private let selfRadioKey = Data(SHA256.hash(data: Data("fellship.demo.self.radio".utf8)))
@@ -235,6 +238,9 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
             for peer in SimPeer.allNodes where !removedContacts.contains(peer.name) {
                 respond(contactFrame(for: peer))
             }
+            for frame in addedContacts.values {
+                respond(frame)
+            }
             respond(Data([MeshCore.Response.endOfContacts.rawValue]))
         case .sendTxtMsg:
             handleDirectMessage(frame)
@@ -265,11 +271,37 @@ final class SimulatedTransport: MeshTransport, @unchecked Sendable {
             respond(Data([MeshCore.Response.ok.rawValue]))
         case .removeContact:
             var r = BinaryReader(frame.dropFirst())
-            if let key = try? r.readBytes(32),
-               let peer = SimPeer.allNodes.first(where: { $0.radioPublicKey == key }) {
-                removedContacts.insert(peer.name)
+            if let key = try? r.readBytes(32) {
+                addedContacts[key] = nil
+                if let peer = SimPeer.allNodes.first(where: { $0.radioPublicKey == key }) {
+                    removedContacts.insert(peer.name)
+                }
             }
             respond(Data([MeshCore.Response.ok.rawValue]))
+        case .addUpdateContact:
+            // Rewrite the AddUpdateContact payload as a Contact response frame
+            // and persist it, so the demo radio remembers it like real flash.
+            var r = BinaryReader(frame.dropFirst())
+            if let key = try? r.readBytes(32) {
+                var w = BinaryWriter()
+                w.writeUInt8(MeshCore.Response.contact.rawValue)
+                w.writeBytes(frame.dropFirst()) // pubKey..lat/lon (no lastMod)
+                w.writeUInt32(UInt32(clamping: Int(Date().timeIntervalSince1970))) // lastMod
+                addedContacts[Data(key)] = w.data
+                removedContacts.remove(SimPeer.allNodes.first { $0.radioPublicKey == key }?.name ?? "")
+            }
+            respond(Data([MeshCore.Response.ok.rawValue]))
+        case .resetPath, .shareContact, .importContact:
+            respond(Data([MeshCore.Response.ok.rawValue]))
+        case .exportContact:
+            var r = BinaryReader(frame.dropFirst())
+            let key = (try? r.readBytes(32)) ?? selfRadioKey
+            // Reply with the peer's contact frame if known, else self.
+            if let peer = SimPeer.allNodes.first(where: { $0.radioPublicKey == key }) {
+                respond(contactFrame(for: peer))
+            } else {
+                respond(Data([MeshCore.Response.ok.rawValue]))
+            }
         case .sendLogin:
             var r = BinaryReader(frame.dropFirst())
             let key = (try? r.readBytes(32)) ?? Data()

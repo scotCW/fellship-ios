@@ -204,6 +204,31 @@ actor MeshSession {
         contacts[publicKey] = nil
     }
 
+    /// Writes a contact into the radio's persistent contact list.
+    func addUpdateContact(_ contact: MeshCore.Contact) async throws {
+        let frame = MeshCore.addUpdateContactFrame(
+            publicKey: contact.publicKey,
+            type: contact.type,
+            flags: contact.flags,
+            outPathLength: contact.outPathLength,
+            outPath: contact.outPath,
+            name: contact.name,
+            lastAdvert: contact.lastAdvert,
+            coordinate: contact.coordinate)
+        let events = try await request(frame, kind: .simple)
+        if case .error? = events.first { throw SessionError.radioError }
+        contacts[contact.publicKey] = contact
+    }
+
+    func resetPath(publicKey: Data) async throws {
+        _ = try await request(MeshCore.resetPathFrame(publicKey: publicKey), kind: .simple)
+    }
+
+    /// Re-broadcasts a contact over the mesh for nearby nodes to pick up.
+    func shareContact(publicKey: Data) async throws {
+        _ = try await request(MeshCore.shareContactFrame(publicKey: publicKey), kind: .simple)
+    }
+
     /// Result arrives asynchronously as a `.loginResult` event.
     func login(publicKey: Data, password: String) async throws {
         _ = try await request(MeshCore.sendLoginFrame(publicKey: publicKey, password: password),

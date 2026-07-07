@@ -110,6 +110,7 @@ final class AppState: ObservableObject {
             selfInfo = info
             engine.attach(session: session)
             classic.attach(session: session)
+            classic.onContactsChanged = { [weak engine] in await engine?.refreshContacts() }
             location.attach(session: session)
             location.setRadioConnected(true)
             settings.lastRadioIdentifier = settings.demoMode ? nil : radio.id

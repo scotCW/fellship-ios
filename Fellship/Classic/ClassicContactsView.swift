@@ -12,6 +12,8 @@ struct ClassicContactDetailView: View {
     @State private var cliCommand = ""
     @State private var confirmRemove = false
     @State private var requestedTelemetry = false
+    @State private var showCardQR = false
+    @State private var actionNote: String?
 
     private var prefixHex: String { contact.publicKey.prefix(6).hexEncoded }
     private var isRepeater: Bool { contact.type == 2 }
@@ -72,6 +74,37 @@ struct ClassicContactDetailView: View {
             }
 
             Section {
+                Button {
+                    showCardQR = true
+                } label: {
+                    Label("Share as QR code", systemImage: "qrcode")
+                }
+                Button {
+                    Task {
+                        await classic.shareOverMesh(contact)
+                        actionNote = "Shared over the mesh"
+                    }
+                } label: {
+                    Label("Share over the mesh", systemImage: "dot.radiowaves.left.and.right")
+                }
+                Button {
+                    Task {
+                        await classic.resetPath(to: contact)
+                        actionNote = "Route reset — the radio will re-discover the path"
+                    }
+                } label: {
+                    Label("Reset routing path", systemImage: "arrow.triangle.2.circlepath")
+                }
+                if let actionNote {
+                    Label(actionNote, systemImage: "checkmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
+            } header: {
+                Text("Share & routing")
+            }
+
+            Section {
                 Button(role: .destructive) {
                     confirmRemove = true
                 } label: {
@@ -83,6 +116,9 @@ struct ClassicContactDetailView: View {
         }
         .navigationTitle(contact.name.isEmpty ? "Node" : contact.name)
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showCardQR) {
+            ContactQRSheet(contact: contact)
+        }
         .confirmationDialog("Remove \(contact.name)?", isPresented: $confirmRemove,
                             titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
@@ -94,6 +130,8 @@ struct ClassicContactDetailView: View {
             }
         }
     }
+
+    // MARK: - Contact QR sheet
 
     @ViewBuilder
     private var repeaterSection: some View {
@@ -146,6 +184,44 @@ struct ClassicContactDetailView: View {
             Text("Remote console")
         } footer: {
             Text("Commands run on the repeater's CLI (after login). Replies arrive as messages in the console thread.")
+        }
+    }
+}
+
+/// A contact's shareable QR code.
+struct ContactQRSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let contact: MeshCore.Contact
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 18) {
+                if let image = QRSupport.generate(from: ContactCard.encode(contact)) {
+                    Image(uiImage: image)
+                        .interpolation(.none)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 280)
+                        .padding(10)
+                        .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                    Text(contact.name.isEmpty ? "Node" : contact.name)
+                        .font(.headline)
+                    Text("Scan from Nodes → + → Add contact by code to save this node.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 28)
+                }
+                Spacer()
+            }
+            .padding(.top, 28)
+            .navigationTitle("Share contact")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
         }
     }
 }
