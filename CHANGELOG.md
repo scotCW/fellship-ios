@@ -18,6 +18,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - Repeater login no longer requires a password to be typed — some repeaters
   are configured for open guest access with a blank password, and the Log in
   button was wrongly disabled until you typed something.
+- Line of sight terrain data was mislabeled as SRTM; it's actually Copernicus
+  DEM GLO-90 (via Open-Meteo). Added the CC BY 4.0 and Copernicus attribution
+  both terms require, on the terrain screen itself and in About → Built on.
 - MeshCore public channel: on real hardware, some firmware acknowledges a
   channel send with a plain OK instead of echoing a SendResult. The app was
   treating that as a failed send and silently dropping the message you just

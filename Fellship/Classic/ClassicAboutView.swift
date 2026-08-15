@@ -75,6 +75,10 @@ struct ClassicAboutView: View {
                  destination: URL(string: "https://openfreemap.org")!)
             Link("Satellite imagery — NASA GIBS",
                  destination: URL(string: "https://www.earthdata.nasa.gov/engage/open-data-services-software/earthdata-developer-portal/gibs-api")!)
+            Link("Terrain elevation — Open-Meteo.com (CC BY 4.0)",
+                 destination: TerrainAttribution.openMeteoURL)
+            Link("Elevation data — Copernicus DEM GLO-90 (ESA / EU)",
+                 destination: TerrainAttribution.copernicusURL)
         } header: {
             Text("Built on")
         } footer: {

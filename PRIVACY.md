@@ -30,8 +30,12 @@ Two things, both opt-in by how you use the app:
 - **Terrain elevation, for MeshCore mode's line-of-sight tool.** Only when
   you tap "Check terrain profile," your coordinates and the selected node's
   coordinates (sampled along the path between you) are sent to Open-Meteo's
-  free elevation API (open-meteo.com) to fetch ground elevation. This never
-  happens automatically.
+  free elevation API (open-meteo.com), backed by Copernicus DEM GLO-90, to
+  fetch ground elevation. This never happens automatically. The data is
+  CC BY 4.0 (Open-Meteo) with an additional Copernicus attribution notice;
+  both are credited on the terrain screen and in About → Built on. Open-Meteo's
+  free tier is for non-commercial use — consistent with Fellship's own model
+  (no ads, no in-app purchases, only voluntary donations).
 
 Everything else — presence, positions, messages, invites — travels
 **radio-to-radio over the LoRa mesh**, never over the internet.

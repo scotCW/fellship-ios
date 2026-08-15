@@ -420,8 +420,15 @@ struct LineOfSightView: View {
                         Label(result.clear ? "Path looks clear" : "Terrain likely blocks this path",
                               systemImage: result.clear ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                             .foregroundStyle(result.clear ? .green : .red)
-                        Text("Elevation from open-meteo.com (SRTM), sampled along the great-circle path. Assumes 60% first-Fresnel-zone clearance at 910 MHz; foliage, buildings and weather aren't in this data.")
+                        Text("Sampled along the great-circle path. Assumes 60% first-Fresnel-zone clearance at 910 MHz; foliage, buildings and weather aren't in this data.")
                             .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Link(destination: TerrainAttribution.openMeteoURL) {
+                            Text(TerrainAttribution.openMeteo)
+                        }
+                        .font(.caption2)
+                        Text(TerrainAttribution.copernicus)
+                            .font(.caption2)
                             .foregroundStyle(.secondary)
                     } else {
                         Text("Terrain isn't loaded yet — tap above to fetch an elevation profile from a free, keyless elevation service (open-meteo.com). This is the only Tools feature that contacts the internet, and only when you ask for it.")
