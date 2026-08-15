@@ -73,7 +73,37 @@ extension RoomEngine {
             applyZoneEvent(event, in: room)
         case .memberAnnounce(let announce):
             noteMember(announce.member, in: room.id)
+        case .reaction(let reaction):
+            guard !myIdentityHex.hasPrefix(reaction.memberID) else { return }
+            applyReaction(reaction, in: room)
         }
+    }
+
+    /// Records someone else's reaction against the message it targets. A
+    /// reaction for a message we never received is dropped — there's nothing
+    /// to attach it to, and storing orphans would grow without bound.
+    private func applyReaction(_ reaction: FellshipEnvelope.Reaction, in room: Room) {
+        guard var message = try? store.message(id: reaction.messageID),
+              message.threadID == room.id else { return }
+        let memberID = resolveMemberID(reaction.memberID, roomID: room.id)
+        var reactors = message.reactions[reaction.emoji] ?? []
+        if reaction.isAdd {
+            // Cap distinct emoji per message so a hostile member can't inflate
+            // a stored row indefinitely.
+            guard message.reactions.count < 12 || message.reactions[reaction.emoji] != nil else { return }
+            guard !reactors.contains(memberID) else { return }
+            guard reactors.count < RoomEngine.maxMembersPerRoom else { return }
+            reactors.append(memberID)
+        } else {
+            reactors.removeAll { $0 == memberID }
+        }
+        if reactors.isEmpty {
+            message.reactions[reaction.emoji] = nil
+        } else {
+            message.reactions[reaction.emoji] = reactors
+        }
+        try? store.saveMessage(message)
+        chatRevision += 1
     }
 
     private func applyPresence(_ p: FellshipEnvelope.Presence, in room: Room) {

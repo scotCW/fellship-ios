@@ -1,4 +1,5 @@
 import XCTest
+import CryptoKit
 @testable import Fellship
 
 final class ClassicModeTests: XCTestCase {
@@ -309,6 +310,73 @@ final class ClassicModeTests: XCTestCase {
         let spacedName = ClassicStore.splitSenderPrefix("Ridge Repeater: online")
         XCTAssertEqual(spacedName?.sender, "Ridge Repeater")
         XCTAssertEqual(spacedName?.body, "online")
+    }
+
+    // MARK: - Reactions
+
+    func testReactionPayloadRoundTrips() throws {
+        let key = SymmetricKey(size: .bits256)
+        let roomID = Data((0..<8).map { UInt8($0) }).hexEncoded
+        let reaction = FellshipEnvelope.Reaction(messageID: "aabbccddeeff",
+                                                 memberID: String(repeating: "1", count: 64),
+                                                 emoji: "👍",
+                                                 isAdd: true,
+                                                 sentAt: Date(timeIntervalSince1970: 1_800_000_000))
+        let text = try FellshipEnvelope.sealRoomPayload(.reaction(reaction),
+                                                        roomID: roomID, roomKey: key)
+        guard case .reaction(let decoded) = try FellshipEnvelope.openRoomPayload(text, roomID: roomID, roomKey: key) else {
+            return XCTFail("expected a reaction payload")
+        }
+        XCTAssertEqual(decoded.messageID, reaction.messageID)
+        XCTAssertEqual(decoded.emoji, "👍")
+        XCTAssertTrue(decoded.isAdd)
+        XCTAssertEqual(decoded.sentAt.timeIntervalSince1970, 1_800_000_000, accuracy: 1)
+    }
+
+    func testReactionRetractionRoundTrips() throws {
+        let key = SymmetricKey(size: .bits256)
+        let roomID = Data((0..<8).map { UInt8($0) }).hexEncoded
+        let reaction = FellshipEnvelope.Reaction(messageID: "010203040506",
+                                                 memberID: String(repeating: "a", count: 64),
+                                                 emoji: "❤️", isAdd: false, sentAt: Date())
+        let text = try FellshipEnvelope.sealRoomPayload(.reaction(reaction), roomID: roomID, roomKey: key)
+        guard case .reaction(let decoded) = try FellshipEnvelope.openRoomPayload(text, roomID: roomID, roomKey: key) else {
+            return XCTFail("expected a reaction payload")
+        }
+        XCTAssertFalse(decoded.isAdd)
+        XCTAssertEqual(decoded.emoji, "❤️")
+    }
+
+    /// A reaction frame has to fit a LoRa text frame with room to spare.
+    func testReactionFitsOneLoRaFrame() throws {
+        let key = SymmetricKey(size: .bits256)
+        let roomID = Data((0..<8).map { UInt8($0) }).hexEncoded
+        let reaction = FellshipEnvelope.Reaction(messageID: "aabbccddeeff",
+                                                 memberID: String(repeating: "f", count: 64),
+                                                 emoji: "🙏", isAdd: true, sentAt: Date())
+        let text = try FellshipEnvelope.sealRoomPayload(.reaction(reaction), roomID: roomID, roomKey: key)
+        XCTAssertLessThan(text.count, 150, "reaction frame must fit a MeshCore text payload")
+    }
+
+    /// Messages written before reactions existed must still decode.
+    func testMessageDecodesWithoutReactionsField() throws {
+        let legacy = """
+        {"id":"m1","threadID":"t1","scope":"room","senderID":"s","senderName":"S",
+         "text":"hi","sentAt":0,"delivery":"received","isFromMe":false,"isSystemEvent":false}
+        """
+        let decoded = try JSONDecoder().decode(RoomMessage.self, from: Data(legacy.utf8))
+        XCTAssertTrue(decoded.reactions.isEmpty)
+        XCTAssertTrue(decoded.sortedReactions.isEmpty)
+    }
+
+    func testSortedReactionsOrderStable() {
+        var message = RoomMessage(id: "m", threadID: "t", scope: .room, senderID: "s",
+                                  senderName: "S", text: "x", sentAt: Date(),
+                                  delivery: .received, isFromMe: false)
+        message.reactions = ["👍": ["a", "b"], "❤️": ["c"], "😂": []]
+        let sorted = message.sortedReactions
+        XCTAssertEqual(sorted.count, 2, "empty reaction buckets are hidden")
+        XCTAssertEqual(sorted.first?.emoji, "👍", "most-reacted first")
     }
 
     // MARK: - Group channels

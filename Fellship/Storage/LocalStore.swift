@@ -132,6 +132,16 @@ final class LocalStore: @unchecked Sendable {
         }.reversed()
     }
 
+    /// One message by ID, for applying a reaction to an existing row.
+    func message(id: String) throws -> RoomMessage? {
+        try db.query("SELECT json FROM messages WHERE id=? LIMIT 1;", [.text(id)])
+            .compactMap {
+                guard let data = $0["json"]?.blobValue else { return nil }
+                return try? decoder.decode(RoomMessage.self, from: data)
+            }
+            .first
+    }
+
     /// Removes an entire message thread (used when demo artifacts are
     /// cleaned up; room threads go through deleteRoom instead).
     func deleteThread(_ threadID: String) throws {

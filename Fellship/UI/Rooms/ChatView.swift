@@ -39,7 +39,13 @@ struct ChatView: View {
                     LazyVStack(spacing: 6) {
                         ForEach(messages) { message in
                             VStack(alignment: .trailing, spacing: 2) {
-                                MessageBubble(message: message)
+                                MessageBubble(message: message,
+                                              room: room,
+                                              onReact: room.map { room in
+                                                  { emoji in
+                                                      Task { await engine.toggleReaction(emoji, on: message, in: room) }
+                                                  }
+                                              })
                                 if message.isFromMe, message.scope == .direct,
                                    message.delivery == .timedOut {
                                     Button {
@@ -166,6 +172,10 @@ struct ChatView: View {
 
 struct MessageBubble: View {
     let message: RoomMessage
+    /// Set for room messages, which support reactions. Direct/channel threads
+    /// pass nil and render without the reaction affordance.
+    var room: Room?
+    var onReact: ((String) -> Void)?
 
     var body: some View {
         if message.isSystemEvent {
@@ -196,6 +206,20 @@ struct MessageBubble: View {
                     .background(message.isFromMe ? Color.accentColor : Color(.secondarySystemBackground),
                                 in: RoundedRectangle(cornerRadius: 16))
                     .foregroundStyle(message.isFromMe ? .white : .primary)
+                    .contextMenu {
+                        if onReact != nil {
+                            ForEach(RoomEngine.quickReactions, id: \.self) { emoji in
+                                Button {
+                                    onReact?(emoji)
+                                } label: {
+                                    Text("\(emoji)  React")
+                                }
+                            }
+                        }
+                    }
+                    if !message.sortedReactions.isEmpty {
+                        ReactionRow(message: message, onReact: onReact)
+                    }
                     HStack(spacing: 4) {
                         Text(message.sentAt, style: .time)
                         if message.isFromMe && !message.delivery.symbol.isEmpty {
@@ -209,5 +233,37 @@ struct MessageBubble: View {
                 if !message.isFromMe { Spacer(minLength: 48) }
             }
         }
+    }
+}
+
+/// The little pill row of emoji reactions under a message. Tapping a pill
+/// toggles your own reaction, matching how every other chat app behaves.
+private struct ReactionRow: View {
+    let message: RoomMessage
+    var onReact: ((String) -> Void)?
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(message.sortedReactions, id: \.emoji) { entry in
+                Button {
+                    onReact?(entry.emoji)
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(entry.emoji)
+                        if entry.memberIDs.count > 1 {
+                            Text("\(entry.memberIDs.count)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color(.tertiarySystemBackground), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(onReact == nil)
+            }
+        }
+        .font(.caption)
     }
 }

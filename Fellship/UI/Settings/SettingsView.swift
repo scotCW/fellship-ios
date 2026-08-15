@@ -23,6 +23,7 @@ struct SettingsView: View {
                 locationSection
                 zonesSection
                 publicRoomsSection
+                telemetrySection
                 mapSection
                 notificationSection
                 appearanceSection
@@ -167,6 +168,20 @@ struct SettingsView: View {
     }
 
     // MARK: Maps
+
+    private var telemetrySection: some View {
+        Section {
+            Picker("Share my telemetry with", selection: $settings.telemetryAudience) {
+                ForEach(TelemetryAudience.allCases) { audience in
+                    Text(audience.displayName).tag(audience)
+                }
+            }
+        } header: {
+            Text("Telemetry")
+        } footer: {
+            Text("Controls what Fellship hands out when another node asks for your telemetry.\n\nImportant: standard MeshCore telemetry is answered by your radio's own firmware without asking the phone, so this setting can't gag a radio that's configured to reply. Turn telemetry off on the device itself if you need that guaranteed.")
+        }
+    }
 
     private var mapSection: some View {
         Section {

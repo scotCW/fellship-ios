@@ -27,6 +27,7 @@ enum FellshipEnvelope {
         case chat = 2
         case zoneEvent = 4
         case memberAnnounce = 5
+        case reaction = 6
         case inviteOffer = 16
         case inviteAccept = 17
         case roomKeyDelivery = 18
@@ -77,11 +78,24 @@ enum FellshipEnvelope {
         var member: Member
     }
 
+    /// An emoji reaction to an earlier message. Deliberately tiny: reactions
+    /// are frequent and a LoRa frame is precious, so this is the message ID
+    /// being reacted to plus one short emoji.
+    struct Reaction: Equatable {
+        var messageID: String   // 6 bytes hex — the message being reacted to
+        var memberID: String
+        var emoji: String
+        /// False retracts a previously sent reaction.
+        var isAdd: Bool
+        var sentAt: Date
+    }
+
     enum RoomPayload: Equatable {
         case presence(Presence)
         case chat(Chat)
         case zoneEvent(ZoneEvent)
         case memberAnnounce(MemberAnnounce)
+        case reaction(Reaction)
     }
 
     // Invite handshake payloads (JSON over chunked DMs).
@@ -162,6 +176,15 @@ enum FellshipEnvelope {
             w.writeUInt8(e.didEnter ? 1 : 0)
             w.writeBytes(wirePrefix(ofMemberID: e.memberID))
             w.writeUInt32(UInt32(clamping: Int(e.sentAt.timeIntervalSince1970)))
+        case .reaction(let r):
+            w.writeUInt8(PayloadType.reaction.rawValue)
+            w.writeUInt8(r.isAdd ? 1 : 0)
+            var msgID = Data(hexEncoded: r.messageID) ?? Data(count: 6)
+            if msgID.count < 6 { msgID.append(Data(count: 6 - msgID.count)) }
+            w.writeBytes(msgID.prefix(6))
+            w.writeBytes(wirePrefix(ofMemberID: r.memberID).prefix(6))
+            w.writeUInt32(UInt32(clamping: Int(r.sentAt.timeIntervalSince1970)))
+            w.writeString(String(r.emoji.prefix(8)))
         case .memberAnnounce(let a):
             w.writeUInt8(PayloadType.memberAnnounce.rawValue)
             let identity = Data(hexEncoded: a.member.id) ?? Data(count: 32)
@@ -209,6 +232,15 @@ enum FellshipEnvelope {
             let member = try r.readBytes(8).hexEncoded
             let ts = Date(timeIntervalSince1970: TimeInterval(try r.readUInt32()))
             return .zoneEvent(ZoneEvent(memberID: member, didEnter: flags & 1 != 0, sentAt: ts))
+        case .reaction:
+            let flags = try r.readUInt8()
+            let messageID = try r.readBytes(6).hexEncoded
+            let member = try r.readBytes(6).hexEncoded
+            let ts = Date(timeIntervalSince1970: TimeInterval(try r.readUInt32()))
+            let emoji = r.readStringToEnd()
+            guard !emoji.isEmpty else { throw EnvelopeError.malformed }
+            return .reaction(Reaction(messageID: messageID, memberID: member,
+                                      emoji: emoji, isAdd: flags & 1 != 0, sentAt: ts))
         case .memberAnnounce:
             let identity = try r.readBytes(32).hexEncoded
             let hasRadio = try r.readUInt8() == 1

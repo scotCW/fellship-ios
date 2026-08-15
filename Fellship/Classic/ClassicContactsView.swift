@@ -11,7 +11,7 @@ struct ClassicContactDetailView: View {
     @State private var password = ""
     @State private var cliCommand = ""
     @State private var confirmRemove = false
-    @State private var requestedTelemetry = false
+    @State private var showTelemetry = false
     @State private var showCardQR = false
     @State private var actionNote: String?
 
@@ -39,22 +39,18 @@ struct ClassicContactDetailView: View {
             }
 
             Section("Telemetry") {
-                if let readings = classic.telemetry[prefixHex], !readings.isEmpty {
-                    ForEach(readings) { reading in
-                        LabeledContent(reading.label, value: reading.value)
-                    }
-                } else if requestedTelemetry {
-                    HStack {
-                        ProgressView()
-                        Text("Waiting for reply over the mesh…")
-                            .foregroundStyle(.secondary)
-                    }
-                }
                 Button {
-                    requestedTelemetry = true
+                    showTelemetry = true
                     Task { await classic.requestTelemetry(contact: contact) }
                 } label: {
                     Label("Request telemetry", systemImage: "waveform.path.ecg")
+                }
+                if let readings = classic.telemetry[prefixHex], !readings.isEmpty {
+                    Button {
+                        showTelemetry = true
+                    } label: {
+                        Label("Last readings (\(readings.count))", systemImage: "list.bullet.rectangle")
+                    }
                 }
             }
 
@@ -118,6 +114,9 @@ struct ClassicContactDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showCardQR) {
             ContactQRSheet(contact: contact)
+        }
+        .sheet(isPresented: $showTelemetry) {
+            TelemetrySheet(contact: contact)
         }
         .confirmationDialog("Remove \(contact.name)?", isPresented: $confirmRemove,
                             titleVisibility: .visible) {
@@ -190,6 +189,79 @@ struct ClassicContactDetailView: View {
 }
 
 /// A contact's shareable QR code.
+/// Telemetry for one node, presented as its own page the moment a request
+/// goes out — so you watch the reply land instead of hunting for it inline.
+struct TelemetrySheet: View {
+    @EnvironmentObject private var classic: ClassicStore
+    @EnvironmentObject private var app: AppState
+    @Environment(\.dismiss) private var dismiss
+    let contact: MeshCore.Contact
+
+    private var prefixHex: String { contact.publicKey.prefix(6).hexEncoded }
+    private var readings: [CayenneLPP.Reading] { classic.telemetry[prefixHex] ?? [] }
+
+    /// Nothing back yet, and we asked recently enough to still be hopeful.
+    @State private var waiting = true
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if !readings.isEmpty {
+                    List {
+                        Section {
+                            ForEach(readings) { reading in
+                                LabeledContent(reading.label, value: reading.value)
+                            }
+                        } header: {
+                            Text("Readings")
+                        } footer: {
+                            Text("Reported by \(contact.name.isEmpty ? "this node" : contact.name) over the mesh. Values are whatever sensors that device exposes.")
+                        }
+                    }
+                } else if waiting {
+                    VStack(spacing: 14) {
+                        ProgressView()
+                        Text("Waiting for a reply over the mesh…")
+                            .foregroundStyle(.secondary)
+                        Text("LoRa round trips can take a while, and the node may be several hops away or asleep.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                    }
+                } else {
+                    EmptyStateView(systemImage: "waveform.path.ecg",
+                                   title: "No telemetry",
+                                   message: "That node didn't answer. It may be out of range, asleep, or not sharing telemetry.")
+                }
+            }
+            .navigationTitle(contact.name.isEmpty ? "Telemetry" : contact.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        waiting = true
+                        Task { await classic.requestTelemetry(contact: contact) }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(!app.transportState.isConnected)
+                    .accessibilityLabel("Request again")
+                }
+            }
+            .task {
+                // Give the mesh a realistic window before calling it a miss.
+                waiting = readings.isEmpty
+                try? await Task.sleep(nanoseconds: 45_000_000_000)
+                if readings.isEmpty { waiting = false }
+            }
+        }
+    }
+}
+
 struct ContactQRSheet: View {
     @Environment(\.dismiss) private var dismiss
     let contact: MeshCore.Contact

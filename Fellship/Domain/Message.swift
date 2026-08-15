@@ -36,6 +36,48 @@ struct RoomMessage: Identifiable, Codable, Hashable, Sendable {
 
     /// True for locally generated entry/exit event lines shown inline in chat.
     var isSystemEvent: Bool = false
+
+    /// Emoji reactions, keyed by emoji → the member IDs who reacted with it.
+    /// Defaulted so messages stored before reactions existed still decode.
+    var reactions: [String: [String]] = [:]
+
+    /// Reactions in a stable display order (most-reacted first, then emoji),
+    /// so the row doesn't reshuffle as identical counts arrive.
+    var sortedReactions: [(emoji: String, memberIDs: [String])] {
+        reactions
+            .filter { !$0.value.isEmpty }
+            .sorted {
+                $0.value.count == $1.value.count ? $0.key < $1.key : $0.value.count > $1.value.count
+            }
+            .map { (emoji: $0.key, memberIDs: $0.value) }
+    }
+}
+
+// Swift's synthesized decoder *throws* on a missing key rather than falling
+// back to a property's default value, so simply adding `reactions` would make
+// every message stored by an earlier version fail to decode — silently wiping
+// chat history on upgrade. Decoding by hand (in an extension, so the
+// memberwise initializer survives) keeps old rows readable.
+extension RoomMessage {
+    enum CodingKeys: String, CodingKey {
+        case id, threadID, scope, senderID, senderName, text, sentAt
+        case delivery, isFromMe, isSystemEvent, reactions
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        threadID = try c.decode(String.self, forKey: .threadID)
+        scope = try c.decode(MessageScope.self, forKey: .scope)
+        senderID = try c.decode(String.self, forKey: .senderID)
+        senderName = try c.decode(String.self, forKey: .senderName)
+        text = try c.decode(String.self, forKey: .text)
+        sentAt = try c.decode(Date.self, forKey: .sentAt)
+        delivery = try c.decode(DeliveryState.self, forKey: .delivery)
+        isFromMe = try c.decode(Bool.self, forKey: .isFromMe)
+        isSystemEvent = try c.decodeIfPresent(Bool.self, forKey: .isSystemEvent) ?? false
+        reactions = try c.decodeIfPresent([String: [String]].self, forKey: .reactions) ?? [:]
+    }
 }
 
 /// A pending room invite, in either direction.

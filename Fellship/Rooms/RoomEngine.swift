@@ -452,6 +452,41 @@ final class RoomEngine: ObservableObject {
     /// stock MeshCore text payload.
     static let chatPartLength = 48
 
+    /// Common quick reactions offered in the UI.
+    static let quickReactions = ["👍", "❤️", "😂", "😮", "🙏", "✅"]
+
+    /// Toggles my reaction on a message and tells the room. Reactions are one
+    /// frame each, so they're cheap enough for LoRa.
+    func toggleReaction(_ emoji: String, on message: RoomMessage, in room: Room) async {
+        guard canSendMessages(in: room) else { return }
+        guard var stored = try? store.message(id: message.id) else { return }
+
+        var reactors = stored.reactions[emoji] ?? []
+        let isAdd = !reactors.contains(myIdentityHex)
+        if isAdd {
+            guard stored.reactions.count < 12 || stored.reactions[emoji] != nil else { return }
+            reactors.append(myIdentityHex)
+        } else {
+            reactors.removeAll { $0 == myIdentityHex }
+        }
+        stored.reactions[emoji] = reactors.isEmpty ? nil : reactors
+        try? store.saveMessage(stored)
+        chatRevision += 1
+
+        guard let session,
+              let key = CryptoService.roomKey(for: room.id),
+              let slot = channelSlots[room.id] else { return }
+        let payload = FellshipEnvelope.Reaction(messageID: message.id,
+                                                memberID: myIdentityHex,
+                                                emoji: emoji,
+                                                isAdd: isAdd,
+                                                sentAt: Date())
+        if let text = try? FellshipEnvelope.sealRoomPayload(.reaction(payload),
+                                                            roomID: room.id, roomKey: key) {
+            _ = try? await session.sendChannelText(text, channelIndex: slot)
+        }
+    }
+
     /// Whether this device may currently speak in `room`. Geofenced rooms are
     /// inside-only; an unknown position (no fix yet) is not treated as being
     /// outside, so a user without location isn't silently muted.

@@ -48,6 +48,29 @@ enum AppearanceOverride: String, CaseIterable, Identifiable, Codable {
     var displayName: String { rawValue.capitalized }
 }
 
+/// Who Fellship will hand telemetry to when it is asked.
+///
+/// Important scope note, reflected in the UI: this governs what *Fellship*
+/// serves. Standard MeshCore telemetry is answered by the radio's own
+/// firmware without consulting the phone, so setting this to "No one" does
+/// not gag a radio that is configured to answer — that has to be turned off
+/// on the device itself.
+enum TelemetryAudience: String, CaseIterable, Identifiable, Codable {
+    case everyone
+    case contactsOnly
+    case nobody
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .everyone: return "Anyone"
+        case .contactsOnly: return "Saved contacts"
+        case .nobody: return "No one"
+        }
+    }
+}
+
 enum DistanceUnits: String, CaseIterable, Identifiable, Codable {
     case imperial, metric
     var id: String { rawValue }
@@ -147,6 +170,12 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(lastRadioIdentifier, forKey: "lastRadioIdentifier") }
     }
 
+    /// Who Fellship serves telemetry to. See `TelemetryAudience` for the
+    /// (important) limits of what the app can actually enforce.
+    @Published var telemetryAudience: TelemetryAudience {
+        didSet { defaults.set(telemetryAudience.rawValue, forKey: "telemetryAudience") }
+    }
+
     /// Height of the user's own antenna above ground, in meters — used by the
     /// Tools → Line of sight terrain profile.
     @Published var myAntennaHeightMeters: Double {
@@ -178,6 +207,8 @@ final class AppSettings: ObservableObject {
         appearance = AppearanceOverride(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .system
         activeMode = defaults.string(forKey: "activeMode") ?? "fellship"
         lastRadioIdentifier = defaults.string(forKey: "lastRadioIdentifier")
+        telemetryAudience = TelemetryAudience(rawValue: defaults.string(forKey: "telemetryAudience") ?? "")
+            ?? .contactsOnly
         let storedAntennaHeight = defaults.double(forKey: "myAntennaHeightMeters")
         myAntennaHeightMeters = storedAntennaHeight > 0 ? storedAntennaHeight : 2
     }
