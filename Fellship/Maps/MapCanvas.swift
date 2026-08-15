@@ -53,6 +53,10 @@ struct MapCanvas: UIViewRepresentable {
     func makeUIView(context: Context) -> MLNMapView {
         let mapView = MLNMapView(frame: .zero, styleURL: styleURL)
         mapView.delegate = context.coordinator
+        // Opt out of the deprecated UIViewController.automaticallyAdjustsScrollViewInsets
+        // lookup — we position our own overlays and don't need MapLibre
+        // auto-adjusting content insets for a nav/tab bar.
+        mapView.automaticallyAdjustsContentInset = false
         mapView.logoView.isHidden = true
         mapView.showsUserLocation = false // Fellship draws its own position marker
         mapView.setCenter(CLLocationCoordinate2D(latitude: 37.77, longitude: -122.45),
