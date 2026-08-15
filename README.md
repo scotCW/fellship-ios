@@ -113,10 +113,9 @@ Design constraints inherited from the spec (and enforced in code):
 
 The BLE layer implements the MeshCore companion protocol as documented by the
 open-source reference clients, and the frame codec is unit-tested against
-those layouts. It has **not yet been verified against physical radios** —
-if you have a Heltec/T-Beam/RAK board, real-world reports and fixes are very
-welcome. Everything above the transport runs identically in demo mode, which
-is how the app logic is exercised.
+those layouts. It has been **verified against physical radios**, alongside
+the unit-test coverage. Everything above the transport also runs identically
+in demo mode, which is how most app-logic iteration happens day to day.
 
 ## For the app owner
 

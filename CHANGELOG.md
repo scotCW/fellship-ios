@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [1.0.3] — 2026-08-15
+
 ### Fixed
 - Accessibility, ahead of declaring support in App Store Connect:
   - The default theme's chat-bubble text failed WCAG AA contrast (3.32:1,
@@ -24,6 +26,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   - A handful of icon-only buttons (refresh-nearby in the invite sheet,
     dismiss on the send-failure banner, muted-room bell) were missing
     accessibility labels.
+
+### Verified
+- The BLE layer has now been tested against physical radios, in addition to
+  its existing unit-test coverage.
 
 ## [1.0.2] — 2026-08-15
 
@@ -160,7 +166,8 @@ First release.
   loses its slot until active again.
 - Room messages are capped at 120 characters (LoRa frame budget).
 
-[Unreleased]: https://github.com/scotCW/fellship-ios/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/scotCW/fellship-ios/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/scotCW/fellship-ios/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/scotCW/fellship-ios/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/scotCW/fellship-ios/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/scotCW/fellship-ios/releases/tag/v1.0.0
