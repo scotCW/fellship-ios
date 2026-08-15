@@ -72,6 +72,14 @@ struct ClassicNodesView: View {
                         } label: {
                             Label("Share my contact card", systemImage: "qrcode")
                         }
+                        if !engine.nearbyContacts.isEmpty {
+                            ShareLink(item: ClassicStore.exportList(engine.nearbyContacts),
+                                      subject: Text("MeshCore contacts"),
+                                      message: Text("Paste this into Fellship: Nodes → ⋯ → Add contact by code")) {
+                                Label("Export all contacts (\(engine.nearbyContacts.count))",
+                                      systemImage: "square.and.arrow.up.on.square")
+                            }
+                        }
                         Divider()
                         Picker("Sort", selection: $sort) {
                             ForEach(NodeSort.allCases) { option in
@@ -128,6 +136,7 @@ struct ClassicNodesView: View {
                 }
             }
             .listStyle(.plain)
+            .refreshable { await engine.refreshContacts() }
         }
     }
 
@@ -186,15 +195,25 @@ struct AddContactSheet: View {
                 .clipShape(RoundedRectangle(cornerRadius: 16))
                 .padding(.horizontal)
 
-                Text("Scan another node's contact code, or paste one below.")
+                Text("Scan another node's contact code, or paste one below. A whole exported list works too.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
 
                 HStack {
-                    TextField("Paste contact code", text: $pasted)
+                    TextField("Paste contact code", text: $pasted, axis: .vertical)
                         .textFieldStyle(.roundedBorder)
+                        .lineLimit(1...4)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
+                    Button {
+                        pasted = UIPasteboard.general.string ?? ""
+                    } label: {
+                        Image(systemName: "doc.on.clipboard")
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("Paste from clipboard")
                     Button("Add") { submit(pasted) }
                         .buttonStyle(.borderedProminent)
                         .disabled(pasted.isEmpty || busy)
@@ -241,31 +260,36 @@ struct MyContactCardSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 18) {
-                if let info = app.selfInfo,
-                   let image = QRSupport.generate(from: cardPayload(info)) {
-                    Image(uiImage: image)
-                        .interpolation(.none)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: 280)
-                        .padding(10)
-                        .background(.white, in: RoundedRectangle(cornerRadius: 16))
+            ScrollView {
+                VStack(spacing: 18) {
+                if let info = app.selfInfo {
+                    if let image = QRSupport.generate(from: cardPayload(info)) {
+                        Image(uiImage: image)
+                            .interpolation(.none)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: 280)
+                            .padding(10)
+                            .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                    }
                     Text(info.name.isEmpty ? "Your radio" : info.name)
                         .font(.headline)
-                    Text("Have another Fellship user scan this from Nodes → + → Add contact by code to save you to their radio.")
+                    Text("Have someone scan this in person, or send them the code below.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 28)
+                    ContactCodeActions(code: cardPayload(info),
+                                       subject: info.name.isEmpty ? "My MeshCore contact" : info.name)
                 } else {
                     EmptyStateView(systemImage: "qrcode",
                                    title: "No radio connected",
                                    message: "Connect a radio to share your contact card.")
                 }
-                Spacer()
+                }
+                .padding(.top, 28)
+                .padding(.bottom, 24)
             }
-            .padding(.top, 28)
             .navigationTitle("My contact card")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -194,28 +194,34 @@ struct ContactQRSheet: View {
     @Environment(\.dismiss) private var dismiss
     let contact: MeshCore.Contact
 
+    private var code: String { ContactCard.encode(contact) }
+
     var body: some View {
         NavigationStack {
-            VStack(spacing: 18) {
-                if let image = QRSupport.generate(from: ContactCard.encode(contact)) {
-                    Image(uiImage: image)
-                        .interpolation(.none)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: 280)
-                        .padding(10)
-                        .background(.white, in: RoundedRectangle(cornerRadius: 16))
+            ScrollView {
+                VStack(spacing: 18) {
+                    if let image = QRSupport.generate(from: code) {
+                        Image(uiImage: image)
+                            .interpolation(.none)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: 280)
+                            .padding(10)
+                            .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                    }
                     Text(contact.name.isEmpty ? "Node" : contact.name)
                         .font(.headline)
-                    Text("Scan from Nodes → + → Add contact by code to save this node.")
+                    Text("Scan this in person, or send the code below to save this node on another device.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 28)
+
+                    ContactCodeActions(code: code, subject: contact.name.isEmpty ? "Node" : contact.name)
                 }
-                Spacer()
+                .padding(.top, 28)
+                .padding(.bottom, 24)
             }
-            .padding(.top, 28)
             .navigationTitle("Share contact")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -223,6 +229,45 @@ struct ContactQRSheet: View {
                     Button("Done") { dismiss() }
                 }
             }
+        }
+    }
+}
+
+/// Copy / share / show-the-raw-text actions for a contact card. A QR alone
+/// only works face to face — these give the code somewhere to actually go.
+struct ContactCodeActions: View {
+    let code: String
+    let subject: String
+    @State private var copied = false
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 12) {
+                Button {
+                    UIPasteboard.general.string = code
+                    copied = true
+                    Task {
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                        copied = false
+                    }
+                } label: {
+                    Label(copied ? "Copied" : "Copy code",
+                          systemImage: copied ? "checkmark" : "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+
+                ShareLink(item: code, subject: Text(subject),
+                          message: Text("Add this MeshCore contact in Fellship: Nodes → ⋯ → Add contact by code")) {
+                    Label("Send", systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            Text(code)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
         }
     }
 }

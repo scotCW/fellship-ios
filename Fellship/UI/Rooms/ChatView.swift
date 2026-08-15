@@ -18,6 +18,20 @@ struct ChatView: View {
     /// their budget is tighter than plain direct messages.
     private var maxLength: Int { room != nil ? 120 : 140 }
 
+    /// A geofenced room is only yours to talk in while you're actually inside
+    /// it. Note this blocks only when we *know* we're outside — with no fix at
+    /// all `myInside` is nil, and locking someone out on a guess would be
+    /// worse than letting them speak.
+    private var isOutsideRoom: Bool {
+        guard let room, room.kind == .geofenced else { return false }
+        return engine.myInside[room.id] == false
+    }
+
+    private var hasNoPositionForRoom: Bool {
+        guard let room, room.kind == .geofenced else { return false }
+        return engine.myInside[room.id] == nil
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
@@ -64,6 +78,21 @@ struct ChatView: View {
 
     private var composer: some View {
         VStack(spacing: 6) {
+            if isOutsideRoom {
+                Label("You're outside this room's area — messages send only from inside it.",
+                      systemImage: "location.slash")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 4)
+            } else if hasNoPositionForRoom {
+                Label("No position yet — can't confirm you're inside this room's area.",
+                      systemImage: "location.magnifyingglass")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 4)
+            }
             if room != nil && zoneOnly {
                 Label("Only members currently in the zone will receive this",
                       systemImage: "scope")
@@ -92,6 +121,7 @@ struct ChatView: View {
                 TextField(placeholder, text: $draft, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...4)
+                    .disabled(isOutsideRoom)
                     .onChange(of: draft) { _, newValue in
                         if newValue.count > maxLength {
                             draft = String(newValue.prefix(maxLength))
@@ -103,7 +133,7 @@ struct ChatView: View {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.title2)
                 }
-                .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(isOutsideRoom || draft.trimmingCharacters(in: .whitespaces).isEmpty)
                 .accessibilityLabel("Send message")
             }
         }
@@ -113,6 +143,7 @@ struct ChatView: View {
     }
 
     private var placeholder: String {
+        if isOutsideRoom { return "Outside the room area" }
         if room != nil { return zoneOnly ? "Message the zone…" : "Message the room…" }
         return "Message \(peerName ?? "nearby radio")…"
     }

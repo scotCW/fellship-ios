@@ -233,12 +233,34 @@ final class ClassicStore: ObservableObject {
         }
     }
 
-    /// Imports a scanned/pasted contact card and saves it to the radio.
+    /// Imports scanned/pasted contact card(s) and saves them to the radio.
+    /// Accepts a whole exported list (one code per line), not just a single
+    /// card, so an export from another device round-trips in one paste.
     func importContactCard(_ payload: String) async -> String? {
-        guard let contact = ContactCard.decode(payload) else {
+        let codes = payload
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let contacts = codes.compactMap(ContactCard.decode)
+        guard !contacts.isEmpty else {
             return "That isn't a valid contact code."
         }
-        return await addContact(contact)
+        var failures = 0
+        for contact in contacts where await addContact(contact) != nil {
+            failures += 1
+        }
+        if failures == contacts.count {
+            return "The radio rejected \(failures == 1 ? "that contact" : "those contacts")."
+        }
+        if failures > 0 {
+            return "Added \(contacts.count - failures), but the radio rejected \(failures)."
+        }
+        return nil
+    }
+
+    /// Every stored contact as a newline-separated list of cards, for export.
+    nonisolated static func exportList(_ contacts: [MeshCore.Contact]) -> String {
+        contacts.map(ContactCard.encode).joined(separator: "\n")
     }
 
     func resetPath(to contact: MeshCore.Contact) async {

@@ -35,6 +35,10 @@ final class RoomEngine: ObservableObject {
     var pendingAcks: [UInt32: String] = [:] // ackCRC → messageID
     var recentAutoInvites: [String: Date] = [:] // "roomID|radioKey" → sent at
     private var lastBeaconAt = Date.distantPast
+    /// When the radio's contact list was last read, so the shared tick can
+    /// re-read it periodically without hammering the link.
+    var lastContactRefresh = Date.distantPast
+    static let contactRefreshInterval: TimeInterval = 120
     private var eventTask: Task<Void, Never>?
     private var sweepTimer: Timer?
     var seenMessageIDs = Set<String>()
@@ -241,6 +245,14 @@ final class RoomEngine: ObservableObject {
         }
         await broadcastPresence(fix: fix)
         await sendOpenToInviteBeaconIfNeeded(fix: fix)
+        // Contacts live in the radio's flash and change without telling us
+        // (adverts heard while the app was backgrounded, edits made on another
+        // client). Re-read them on the shared timer rather than only at
+        // connect, so Nodes stays in step with the radio.
+        if session != nil,
+           Date().timeIntervalSince(lastContactRefresh) >= Self.contactRefreshInterval {
+            await refreshContacts()
+        }
     }
 
     /// Checks my own position against every geofenced boundary I hold
@@ -286,7 +298,7 @@ final class RoomEngine: ObservableObject {
         }
         Task {
             await self.ensureAllChannels()
-            await self.refreshContacts()
+            await self.refreshContactsWithRetry()
         }
     }
 
@@ -296,10 +308,30 @@ final class RoomEngine: ObservableObject {
         eventTask = nil
     }
 
-    func refreshContacts() async {
-        guard let session else { return }
-        if let contacts = try? await session.getContacts() {
-            nearbyContacts = contacts.sorted { $0.lastAdvert > $1.lastAdvert }
+    /// Pulls the radio's contact list into `nearbyContacts`.
+    /// - Returns: whether the radio actually answered.
+    @discardableResult
+    func refreshContacts() async -> Bool {
+        guard let session else { return false }
+        guard let contacts = try? await session.getContacts() else { return false }
+        nearbyContacts = contacts.sorted { $0.lastAdvert > $1.lastAdvert }
+        lastContactRefresh = Date()
+        return true
+    }
+
+    /// A radio is often still bringing its contact list up right after the
+    /// link opens, so the first read can time out or come back empty. A single
+    /// silent failure used to leave Nodes permanently empty (there was no
+    /// retry and no periodic re-read), which is why contacts "never synced".
+    func refreshContactsWithRetry() async {
+        for attempt in 0..<4 {
+            if attempt > 0 {
+                let delay = pow(2.0, Double(attempt - 1)) * 1.5 // 1.5s, 3s, 6s
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
+            guard session != nil else { return }
+            let answered = await refreshContacts()
+            if answered && !nearbyContacts.isEmpty { return }
         }
     }
 
@@ -419,7 +451,18 @@ final class RoomEngine: ObservableObject {
     /// stock MeshCore text payload.
     static let chatPartLength = 48
 
+    /// Whether this device may currently speak in `room`. Geofenced rooms are
+    /// inside-only; an unknown position (no fix yet) is not treated as being
+    /// outside, so a user without location isn't silently muted.
+    func canSendMessages(in room: Room) -> Bool {
+        guard room.kind == .geofenced else { return true }
+        return myInside[room.id] != false
+    }
+
     func sendRoomMessage(_ room: Room, text: String, zoneOnly: Bool) async {
+        // Enforced here as well as in the composer: leaving the area mid-draft
+        // shouldn't get a message out just because the view hadn't updated.
+        guard canSendMessages(in: room) else { return }
         // 6 random bytes, hex — this exact ID travels on the wire so all
         // members dedupe (and reassemble parts) consistently.
         var idBytes = Data(count: 6)

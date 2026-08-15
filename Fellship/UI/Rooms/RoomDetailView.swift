@@ -146,14 +146,69 @@ struct MemberStrip: View {
     }
 }
 
+/// Read-only map of a room's boundary, shown to every member in room
+/// settings. The area is shared state — knowing where the room *is* shouldn't
+/// be a privilege of whoever happened to create it.
+struct RoomAreaPreview: View {
+    @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var engine: RoomEngine
+    @EnvironmentObject private var location: LocationService
+    let room: Room
+    let boundary: Boundary
+
+    var body: some View {
+        let enclosing = GeoMath.enclosingCircle(of: boundary)
+        MapCanvas(styleURL: app.mapStyle.style,
+                  markers: myMarker,
+                  boundaries: [MapBoundaryOverlay(id: room.id,
+                                                  boundary: boundary,
+                                                  isActive: engine.isActive(room))],
+                  cameraTarget: CameraTarget(center: enclosing.center,
+                                             zoom: zoom(forRadius: enclosing.radiusMeters),
+                                             animated: false))
+            .allowsHitTesting(false)
+    }
+
+    private var myMarker: [MapMarker] {
+        guard let mine = location.lastFix?.coordinate else { return [] }
+        return [MapMarker(id: "me", name: "You", coordinate: mine, kind: .me)]
+    }
+
+    /// Pick a zoom that fits the whole boundary in the preview.
+    private func zoom(forRadius meters: Double) -> Double {
+        // Each zoom level halves the ground covered; z13 ≈ 1 km across a
+        // preview this size, so scale from there and clamp to sane bounds.
+        let target = max(meters, 50) * 2.4
+        let zoom = 13.0 - log2(target / 1_000)
+        return min(17, max(3, zoom))
+    }
+}
+
 struct RoomSettingsSheet: View {
     @EnvironmentObject private var engine: RoomEngine
+    @EnvironmentObject private var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
     let roomID: String
     @State private var confirmDelete = false
 
     private var room: Room? {
         engine.rooms.first { $0.id == roomID }
+    }
+
+    /// Plain-language description of the room's area, in the user's units.
+    /// Shown to every member — the boundary is shared state, not something
+    /// only the creator should be able to see.
+    private func areaDescription(_ boundary: Boundary) -> String {
+        switch boundary {
+        case .circle(_, let radius):
+            return "Circle, \(Format.distance(radius, units: settings.units)) radius."
+        case .box:
+            let (_, radius) = GeoMath.enclosingCircle(of: boundary)
+            return "Box, about \(Format.distance(radius * 2, units: settings.units)) across."
+        case .polygon(let vertices):
+            let (_, radius) = GeoMath.enclosingCircle(of: boundary)
+            return "Outline with \(vertices.count) corners, about \(Format.distance(radius * 2, units: settings.units)) across."
+        }
     }
 
     var body: some View {
@@ -179,16 +234,32 @@ struct RoomSettingsSheet: View {
                         Text("Location sharing is enforced when your device broadcasts: with it off, your coordinates are never transmitted to this room — not merely hidden.")
                     }
 
+                    if let boundary = room.boundary {
+                        Section {
+                            RoomAreaPreview(room: room, boundary: boundary)
+                                .frame(height: 190)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                                .listRowInsets(EdgeInsets())
+                        } header: {
+                            Text("Room area")
+                        } footer: {
+                            Text(areaDescription(boundary)
+                                 + (engine.myInside[room.id] == true
+                                    ? " You're inside it now."
+                                    : engine.myInside[room.id] == false
+                                      ? " You're currently outside it."
+                                      : " Your position isn't known yet."))
+                        }
+                    }
+
                     Section("About this room") {
                         LabeledContent("Type", value: room.kind.displayName)
                         LabeledContent("Access", value: room.access.displayName)
                         LabeledContent("Lifetime", value: room.permanence == .permanent
                                        ? "Permanent"
                                        : "Ends \(room.expiresAt.map { Format.ago($0) } ?? "—")")
-                        if case .circle(_, let radius) = room.boundary {
-                            LabeledContent("Boundary", value: "Circle, \(Format.distance(radius, units: .metric)) radius")
-                        } else if let boundary = room.boundary {
-                            LabeledContent("Boundary", value: boundary.kindDescription)
+                        if let boundary = room.boundary {
+                            LabeledContent("Boundary", value: areaDescription(boundary))
                         }
                         LabeledContent("Members", value: "\(engine.members(of: room).count)")
                     }
