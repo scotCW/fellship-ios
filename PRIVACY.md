@@ -19,11 +19,19 @@ Fellship is: **the data never leaves your device or your mesh.**
 
 ## What Fellship sends over the internet
 
-Only map tiles. When you view or download maps, tile requests go to the map
-provider you selected (OpenFreeMap, NASA GIBS, or your own provider). Those
-requests necessarily reveal your IP address and the map areas you request to
-that provider, governed by their privacy policies. Offline map downloads exist
-precisely so you can do this once at home and never again in the field.
+Two things, both opt-in by how you use the app:
+
+- **Map tiles.** When you view or download maps, tile requests go to the map
+  provider you selected (OpenFreeMap, NASA GIBS, or your own provider). Those
+  requests necessarily reveal your IP address and the map areas you request
+  to that provider, governed by their privacy policies. Offline map downloads
+  exist precisely so you can do this once at home and never again in the
+  field.
+- **Terrain elevation, for MeshCore mode's line-of-sight tool.** Only when
+  you tap "Check terrain profile," your coordinates and the selected node's
+  coordinates (sampled along the path between you) are sent to Open-Meteo's
+  free elevation API (open-meteo.com) to fetch ground elevation. This never
+  happens automatically.
 
 Everything else — presence, positions, messages, invites — travels
 **radio-to-radio over the LoRa mesh**, never over the internet.
