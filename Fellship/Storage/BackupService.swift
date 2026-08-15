@@ -47,7 +47,7 @@ enum BackupService {
     static func deriveKey(passphrase: String, salt: Data) -> SymmetricKey {
         var derived = Data(count: 32)
         let passphraseData = Data(passphrase.utf8)
-        derived.withUnsafeMutableBytes { derivedBytes in
+        let status = derived.withUnsafeMutableBytes { derivedBytes in
             passphraseData.withUnsafeBytes { passBytes in
                 salt.withUnsafeBytes { saltBytes in
                     CCKeyDerivationPBKDF(
@@ -63,6 +63,7 @@ enum BackupService {
                 }
             }
         }
+        precondition(status == kCCSuccess, "PBKDF2 key derivation failed (status \(status))")
         return SymmetricKey(data: derived)
     }
 
