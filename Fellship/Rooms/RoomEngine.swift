@@ -368,8 +368,9 @@ final class RoomEngine: ObservableObject {
                                           secret: CryptoService.channelPSK(roomKey: key))
             return
         }
-        let used = Set(channelSlots.values)
-        var slot: UInt8? = (1...7).first { !used.contains(UInt8($0)) }.map(UInt8.init)
+        // Slots are shared with classic mode's joined #channels, so ask the
+        // registry rather than only looking at our own assignments.
+        var slot: UInt8? = ChannelSlotRegistry.freeRoomSlot()
         if slot == nil {
             // Oversubscribed: evict the slot belonging to the oldest room.
             let byAge = rooms.sorted { $0.createdAt < $1.createdAt }

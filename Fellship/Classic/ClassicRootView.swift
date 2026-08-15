@@ -38,14 +38,14 @@ struct ClassicMessagesView: View {
     var body: some View {
         VStack(spacing: 0) {
             Picker("Kind", selection: $segment) {
-                Text("Public channel").tag(0)
+                Text("Channels").tag(0)
                 Text("Direct").tag(1)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             if segment == 0 {
-                ClassicChannelView()
+                ClassicChannelListView()
             } else {
                 ClassicChatsView()
             }
@@ -53,16 +53,188 @@ struct ClassicMessagesView: View {
     }
 }
 
-// MARK: - Public channel (channel 0, plaintext, everyone in radio range)
+/// Lists the public channel plus every joined `#channel`, with the controls
+/// to join a new one or leave an existing one.
+struct ClassicChannelListView: View {
+    @EnvironmentObject private var classic: ClassicStore
+    @EnvironmentObject private var app: AppState
+    @State private var showJoin = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    NavigationLink {
+                        ClassicChannelView(channel: nil)
+                    } label: {
+                        ChannelRow(title: "Public",
+                                   subtitle: "Unencrypted — every radio in range",
+                                   systemImage: "megaphone",
+                                   count: classic.channelMessages.count)
+                    }
+                }
+                Section {
+                    if classic.joinedChannels.isEmpty {
+                        Text("No channels joined yet. Join one to talk to a group without it being public.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(classic.joinedChannels) { channel in
+                        NavigationLink {
+                            ClassicChannelView(channel: channel)
+                        } label: {
+                            ChannelRow(title: channel.displayName,
+                                       subtitle: "Slot \(channel.index) · encrypted",
+                                       systemImage: "number",
+                                       count: classic.messages(forChannel: channel.index).count)
+                        }
+                        .swipeActions {
+                            Button(role: .destructive) {
+                                Task { await classic.leaveChannel(channel) }
+                            } label: {
+                                Label("Leave", systemImage: "rectangle.portrait.and.arrow.right")
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Group channels")
+                }
+            }
+            .navigationTitle("Channels")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showJoin = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .disabled(!app.transportState.isConnected)
+                    .accessibilityLabel("Join a channel")
+                }
+            }
+            .sheet(isPresented: $showJoin) {
+                JoinChannelSheet()
+            }
+        }
+    }
+}
+
+private struct ChannelRow: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.title3)
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 26)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if count > 0 {
+                Text("\(count)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+struct JoinChannelSheet: View {
+    @EnvironmentObject private var classic: ClassicStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var secret = ""
+    @State private var error: String?
+    @State private var busy = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Channel name (e.g. general)", text: $name)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                } header: {
+                    Text("Channel")
+                } footer: {
+                    Text("Everyone using the same name lands on the same channel — no key exchange needed.")
+                }
+
+                Section {
+                    TextField("Optional 32-character hex key", text: $secret)
+                        .font(.caption.monospaced())
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                } header: {
+                    Text("Custom key")
+                } footer: {
+                    Text("Leave blank to derive the key from the name. Set one only if your group already shares a specific channel key.")
+                }
+
+                if let error {
+                    Text(error).foregroundStyle(.red).font(.callout)
+                }
+
+                Section {
+                    Button {
+                        join()
+                    } label: {
+                        if busy {
+                            HStack { ProgressView(); Text("Joining…") }
+                        } else {
+                            Text("Join channel")
+                        }
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || busy)
+                }
+            }
+            .navigationTitle("Join a channel")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func join() {
+        busy = true
+        error = nil
+        Task {
+            do {
+                try await classic.joinChannel(name: name, secretText: secret)
+                dismiss()
+            } catch {
+                self.error = (error as? LocalizedError)?.errorDescription ?? "Couldn't join that channel."
+            }
+            busy = false
+        }
+    }
+}
+
+// MARK: - Channel chat (public channel 0, or a joined #channel)
 
 struct ClassicChannelView: View {
     @EnvironmentObject private var classic: ClassicStore
     @EnvironmentObject private var app: AppState
+    /// nil = the public channel.
+    var channel: MeshChannel?
     @State private var draft = ""
     @State private var showSendFailure = false
 
+    private var index: UInt8 { channel?.index ?? MeshChannel.publicIndex }
+    private var messages: [RoomMessage] { classic.messages(forChannel: index) }
+    private var title: String { channel?.displayName ?? "Public channel" }
+
     var body: some View {
-        NavigationStack {
+        Group {
             VStack(spacing: 0) {
                 if showSendFailure {
                     HStack {
@@ -81,16 +253,18 @@ struct ClassicChannelView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                 }
-                if classic.channelMessages.isEmpty {
-                    EmptyStateView(systemImage: "megaphone",
-                                   title: "Public channel",
-                                   message: "Messages here go unencrypted to every MeshCore radio in range — the mesh's town square. Say hello.")
+                if messages.isEmpty {
+                    EmptyStateView(systemImage: channel == nil ? "megaphone" : "number",
+                                   title: title,
+                                   message: channel == nil
+                                       ? "Messages here go unencrypted to every MeshCore radio in range — the mesh's town square. Say hello."
+                                       : "Encrypted to everyone holding this channel's key. Say hello.")
                         .frame(maxHeight: .infinity)
                 } else {
                     ScrollViewReader { proxy in
                         ScrollView {
                             LazyVStack(spacing: 6) {
-                                ForEach(classic.channelMessages) { message in
+                                ForEach(messages) { message in
                                     MessageBubble(message: message)
                                         .id(message.id)
                                 }
@@ -98,13 +272,13 @@ struct ClassicChannelView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                         }
-                        .onChange(of: classic.channelMessages.count) {
-                            if let last = classic.channelMessages.last {
+                        .onChange(of: messages.count) {
+                            if let last = messages.last {
                                 withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                             }
                         }
                         .onAppear {
-                            if let last = classic.channelMessages.last {
+                            if let last = messages.last {
                                 proxy.scrollTo(last.id, anchor: .bottom)
                             }
                         }
@@ -112,7 +286,7 @@ struct ClassicChannelView: View {
                 }
                 composer
             }
-            .navigationTitle("Public channel")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .onChange(of: classic.channelSendError) { _, failed in
                 guard let failed else { return }
@@ -125,7 +299,8 @@ struct ClassicChannelView: View {
 
     private var composer: some View {
         HStack(spacing: 10) {
-            TextField("Message everyone in range…", text: $draft, axis: .vertical)
+            TextField(channel == nil ? "Message everyone in range…" : "Message \(title)…",
+                      text: $draft, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...3)
                 .onChange(of: draft) { _, newValue in
@@ -135,13 +310,13 @@ struct ClassicChannelView: View {
                 let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { return }
                 draft = ""
-                Task { await classic.sendChannelMessage(text) }
+                Task { await classic.sendChannelMessage(text, toChannel: index) }
             } label: {
                 Image(systemName: "arrow.up.circle.fill").font(.title2)
             }
             .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty
                       || !app.transportState.isConnected)
-            .accessibilityLabel("Send to public channel")
+            .accessibilityLabel("Send to \(title)")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

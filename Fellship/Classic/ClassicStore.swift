@@ -13,6 +13,10 @@ final class ClassicStore: ObservableObject {
 
     /// Public channel (index 0) messages, oldest first.
     @Published private(set) var channelMessages: [RoomMessage] = []
+    /// Group channels the user has joined (slots 1…7), newest first.
+    @Published private(set) var joinedChannels: [MeshChannel] = []
+    /// channel index → messages, for joined #channels.
+    @Published private(set) var channelThreads: [UInt8: [RoomMessage]] = [:]
     /// Text of the most recent public-channel send that actually failed
     /// (radio threw an error), so the UI can restore it to the composer
     /// instead of silently losing what the user typed.
@@ -56,6 +60,10 @@ final class ClassicStore: ObservableObject {
         self.settings = settings
         favorites = Set(UserDefaults.standard.stringArray(forKey: "classicFavorites") ?? [])
         channelMessages = (try? store.messages(threadID: Self.channelThreadID)) ?? []
+        joinedChannels = ChannelSlotRegistry.loadChannels()
+        for channel in joinedChannels {
+            channelThreads[channel.index] = (try? store.messages(threadID: channel.threadID)) ?? []
+        }
     }
 
     func attach(session: MeshSession) {
@@ -68,6 +76,9 @@ final class ClassicStore: ObservableObject {
                 self.handle(event)
             }
         }
+        // Re-apply joined channels to the radio: it may be a different radio,
+        // or have been reset since we last configured it.
+        Task { [weak self] in await self?.reapplyChannels() }
     }
 
     func detach() {
@@ -79,12 +90,17 @@ final class ClassicStore: ObservableObject {
     private func handle(_ event: MeshEvent) {
         switch event {
         case .channelMessage(let message):
-            // Channel 0 plaintext only — Fellship's encrypted room traffic
-            // (any channel) is RoomEngine's business, not ours.
-            guard message.channelIndex == 0,
-                  !message.text.hasPrefix(FellshipEnvelope.roomPrefix),
+            // Fellship's encrypted room traffic (any channel) is RoomEngine's
+            // business, not ours.
+            guard !message.text.hasPrefix(FellshipEnvelope.roomPrefix),
                   !message.text.hasPrefix(FellshipEnvelope.directPrefix) else { return }
-            appendChannel(message.text, sentAt: message.senderTimestamp, fromMe: false)
+            let index = UInt8(clamping: message.channelIndex)
+            if message.channelIndex == 0 {
+                appendChannel(message.text, sentAt: message.senderTimestamp, fromMe: false)
+            } else if joinedChannels.contains(where: { $0.index == index }) {
+                appendChannelThread(index, text: message.text,
+                                    sentAt: message.senderTimestamp, fromMe: false)
+            }
         case .loginResult(let prefix, let success):
             loginStates[prefix] = success ? .loggedIn : .failed
         case .telemetry(let prefix, let readings):
@@ -172,6 +188,126 @@ final class ClassicStore: ObservableObject {
         } catch {
             channelSendError = text
         }
+    }
+
+    // MARK: - Group channels (#channels)
+
+    enum ChannelError: LocalizedError {
+        case noRadio
+        case noFreeSlots
+        case alreadyJoined
+        case badSecret
+        case radioRejected
+
+        var errorDescription: String? {
+            switch self {
+            case .noRadio: return "Connect a radio first."
+            case .noFreeSlots:
+                return "All 7 channel slots are in use. Leave a channel, or delete a Fellship room, to free one."
+            case .alreadyJoined: return "You're already in that channel."
+            case .badSecret: return "That key isn't valid — expected 32 hex characters."
+            case .radioRejected: return "The radio wouldn't accept that channel."
+            }
+        }
+    }
+
+    /// Joins a `#channel`. With no key, the secret is derived from the name so
+    /// everyone using the same name lands on the same channel.
+    func joinChannel(name: String, secretText: String) async throws {
+        guard let session else { throw ChannelError.noRadio }
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "#", with: "")
+        guard !cleanName.isEmpty else { throw ChannelError.badSecret }
+
+        let secret: Data
+        if secretText.trimmingCharacters(in: .whitespaces).isEmpty {
+            secret = MeshChannel.derivedSecret(forName: cleanName)
+        } else if let parsed = MeshChannel.parseSecret(secretText) {
+            secret = parsed
+        } else {
+            throw ChannelError.badSecret
+        }
+
+        guard !joinedChannels.contains(where: { $0.secret == secret }) else {
+            throw ChannelError.alreadyJoined
+        }
+        guard let slot = ChannelSlotRegistry.freeChannelSlot() else {
+            throw ChannelError.noFreeSlots
+        }
+        do {
+            try await session.setChannel(index: slot, name: String(cleanName.prefix(31)), secret: secret)
+        } catch {
+            throw ChannelError.radioRejected
+        }
+        let channel = MeshChannel(index: slot, name: cleanName, secret: secret, joinedAt: Date())
+        joinedChannels.insert(channel, at: 0)
+        channelThreads[slot] = []
+        ChannelSlotRegistry.saveChannels(joinedChannels)
+    }
+
+    func leaveChannel(_ channel: MeshChannel) async {
+        // Blank the slot so the radio stops decrypting that traffic and the
+        // slot becomes reusable by a room or another channel.
+        try? await session?.setChannel(index: channel.index, name: "", secret: Data(count: 16))
+        joinedChannels.removeAll { $0.index == channel.index }
+        channelThreads[channel.index] = nil
+        ChannelSlotRegistry.saveChannels(joinedChannels)
+    }
+
+    /// Pushes every joined channel back onto the radio (new radio, or one
+    /// that's been factory reset since we last saw it).
+    func reapplyChannels() async {
+        guard let session else { return }
+        for channel in joinedChannels {
+            try? await session.setChannel(index: channel.index,
+                                          name: String(channel.name.prefix(31)),
+                                          secret: channel.secret)
+        }
+    }
+
+    func messages(forChannel index: UInt8) -> [RoomMessage] {
+        index == MeshChannel.publicIndex ? channelMessages : (channelThreads[index] ?? [])
+    }
+
+    func sendChannelMessage(_ text: String, toChannel index: UInt8) async {
+        guard index != MeshChannel.publicIndex else {
+            await sendChannelMessage(text)
+            return
+        }
+        guard let session else { return }
+        let name = settings.displayName.isEmpty ? "anon" : settings.displayName
+        let wire = "\(name): \(text)"
+        do {
+            _ = try await session.sendChannelText(String(wire.prefix(150)), channelIndex: index)
+            appendChannelThread(index, text: text, sentAt: Date(), fromMe: true)
+        } catch {
+            channelSendError = text
+        }
+    }
+
+    private func appendChannelThread(_ index: UInt8, text: String, sentAt: Date, fromMe: Bool) {
+        guard let channel = joinedChannels.first(where: { $0.index == index }) else { return }
+        var sender = fromMe ? settings.displayName : ""
+        var body = text
+        if !fromMe, let split = Self.splitSenderPrefix(text) {
+            sender = split.sender
+            body = split.body
+        }
+        let stamp = sentAt.timeIntervalSince1970 > 1_577_836_800 ? sentAt : Date()
+        let message = RoomMessage(id: UUID().uuidString,
+                                  threadID: channel.threadID,
+                                  scope: .room,
+                                  senderID: sender,
+                                  senderName: sender.isEmpty ? "Unknown" : sender,
+                                  text: body,
+                                  sentAt: stamp,
+                                  delivery: fromMe ? .sent : .received,
+                                  isFromMe: fromMe)
+        try? store.saveMessage(message)
+        var thread = channelThreads[index] ?? []
+        thread.append(message)
+        if thread.count > 500 { thread.removeFirst(thread.count - 500) }
+        channelThreads[index] = thread
     }
 
     // MARK: - Repeater tools

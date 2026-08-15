@@ -311,6 +311,58 @@ final class ClassicModeTests: XCTestCase {
         XCTAssertEqual(spacedName?.body, "online")
     }
 
+    // MARK: - Group channels
+
+    /// Everyone typing the same channel name must land on the same key, or
+    /// they can't hear each other.
+    func testChannelSecretDerivationIsStableAndNormalized() {
+        let a = MeshChannel.derivedSecret(forName: "general")
+        XCTAssertEqual(a.count, 16)
+        XCTAssertEqual(a, MeshChannel.derivedSecret(forName: "general"))
+        XCTAssertEqual(a, MeshChannel.derivedSecret(forName: "#General"))
+        XCTAssertEqual(a, MeshChannel.derivedSecret(forName: "  GENERAL  "))
+        XCTAssertNotEqual(a, MeshChannel.derivedSecret(forName: "trail"))
+    }
+
+    func testChannelSecretParsing() {
+        let hex = String(repeating: "ab", count: 16) // 16 bytes
+        XCTAssertEqual(MeshChannel.parseSecret(hex)?.count, 16)
+        XCTAssertNil(MeshChannel.parseSecret("too-short"))
+        XCTAssertNil(MeshChannel.parseSecret(""))
+        // 8 bytes is not a channel key.
+        XCTAssertNil(MeshChannel.parseSecret(String(repeating: "ab", count: 8)))
+    }
+
+    /// Rooms and #channels share slots 1...7 and must not be handed the same
+    /// one — allocating from opposite ends keeps them apart.
+    func testRoomAndChannelSlotsDoNotCollide() {
+        let defaults = UserDefaults(suiteName: "fellship.tests.slots")!
+        defaults.removePersistentDomain(forName: "fellship.tests.slots")
+
+        XCTAssertEqual(ChannelSlotRegistry.freeRoomSlot(defaults: defaults), 1)
+        XCTAssertEqual(ChannelSlotRegistry.freeChannelSlot(defaults: defaults), 7)
+
+        defaults.set(["room-a": 1, "room-b": 2], forKey: ChannelSlotRegistry.roomSlotsKey)
+        ChannelSlotRegistry.saveChannels([
+            MeshChannel(index: 7, name: "general", secret: Data(count: 16), joinedAt: Date())
+        ], defaults: defaults)
+
+        XCTAssertEqual(ChannelSlotRegistry.freeRoomSlot(defaults: defaults), 3)
+        XCTAssertEqual(ChannelSlotRegistry.freeChannelSlot(defaults: defaults), 6)
+
+        // Saturate everything: no slot may be offered twice.
+        defaults.set(["a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "f": 6, "g": 7],
+                     forKey: ChannelSlotRegistry.roomSlotsKey)
+        XCTAssertNil(ChannelSlotRegistry.freeRoomSlot(defaults: defaults))
+        XCTAssertNil(ChannelSlotRegistry.freeChannelSlot(defaults: defaults))
+        defaults.removePersistentDomain(forName: "fellship.tests.slots")
+    }
+
+    func testChannelThreadIDsAreDistinct() {
+        XCTAssertEqual(MeshChannel.threadID(forIndex: 0), "mc-public-channel")
+        XCTAssertNotEqual(MeshChannel.threadID(forIndex: 1), MeshChannel.threadID(forIndex: 2))
+    }
+
     func testSenderPrefixRejectsNonNames() {
         // A bare URL must not become a sender called "https".
         XCTAssertNil(ClassicStore.splitSenderPrefix("https://example.com/x"))
