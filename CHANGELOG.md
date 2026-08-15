@@ -7,7 +7,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
-## [1.1.1] — 2026-08-15
+## [1.0.2] — 2026-08-15
 
 ### Fixed
 - **Room presence and messaging with a GPS-less radio.** Connecting a radio
@@ -41,6 +41,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - Messages stored by earlier versions still decode after the reactions field
   was added — Swift's synthesized decoder throws on missing keys rather than
   using defaults, which would otherwise have wiped chat history on upgrade.
+- App Store Connect no longer asks the export-compliance question on every
+  build upload — declared `ITSAppUsesNonExemptEncryption=false`, accurate
+  since Fellship only uses standard algorithms via Apple's own CryptoKit/
+  CommonCrypto (ChaCha20-Poly1305, Curve25519, HKDF-SHA256, PBKDF2).
 
 ### Added
 - **Message reactions** — long-press a room message to react; reactions
@@ -138,7 +142,7 @@ First release.
   loses its slot until active again.
 - Room messages are capped at 120 characters (LoRa frame budget).
 
-[Unreleased]: https://github.com/scotCW/fellship-ios/compare/v1.1.1...HEAD
-[1.1.1]: https://github.com/scotCW/fellship-ios/compare/v1.0.1...v1.1.1
+[Unreleased]: https://github.com/scotCW/fellship-ios/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/scotCW/fellship-ios/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/scotCW/fellship-ios/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/scotCW/fellship-ios/releases/tag/v1.0.0

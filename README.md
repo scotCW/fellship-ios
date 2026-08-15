@@ -98,7 +98,7 @@ Design constraints inherited from the spec (and enforced in code):
 - **No satellite layer** — the original spec hoped for ~10 m Sentinel-2 /
   Landsat imagery. The only *global, reliable, keyless* option (NASA GIBS's
   VIIRS daily composite) is roughly 250 m/pixel, which proved too coarse to be
-  worth having, so it was removed in 1.1.1. Bring your own provider if you
+  worth having, so it was removed in 1.0.2. Bring your own provider if you
   need imagery.
 - **Message length** — LoRa frames are tiny. Room messages are capped at 120
   characters (the composer shows a counter), direct messages at 140. Encrypted
