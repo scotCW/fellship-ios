@@ -13,6 +13,10 @@ final class ClassicStore: ObservableObject {
 
     /// Public channel (index 0) messages, oldest first.
     @Published private(set) var channelMessages: [RoomMessage] = []
+    /// Text of the most recent public-channel send that actually failed
+    /// (radio threw an error), so the UI can restore it to the composer
+    /// instead of silently losing what the user typed.
+    @Published var channelSendError: String?
     /// Radio-key-prefix (12 hex) → login state for repeaters.
     @Published private(set) var loginStates: [String: LoginState] = [:]
     /// Radio-key-prefix (12 hex) → latest telemetry readings.
@@ -142,8 +146,14 @@ final class ClassicStore: ObservableObject {
         guard let session else { return }
         let name = settings.displayName.isEmpty ? "anon" : settings.displayName
         let wire = "\(name): \(text)"
-        if (try? await session.sendChannelText(String(wire.prefix(150)), channelIndex: 0)) != nil {
+        do {
+            // sendChannelText legitimately returns nil on success (some
+            // firmware replies plain OK instead of echoing a SendResult) —
+            // only a thrown error means the send actually failed.
+            _ = try await session.sendChannelText(String(wire.prefix(150)), channelIndex: 0)
             appendChannel(text, sentAt: Date(), fromMe: true)
+        } catch {
+            channelSendError = text
         }
     }
 

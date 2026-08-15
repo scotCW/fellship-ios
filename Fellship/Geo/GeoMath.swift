@@ -26,6 +26,23 @@ enum GeoMath {
         return (deg + 360).truncatingRemainder(dividingBy: 360)
     }
 
+    /// A point a `fraction` (0...1) of the way along the great-circle path
+    /// from `from` to `to`. Used to sample a terrain elevation profile.
+    static func intermediate(from: Coordinate, to: Coordinate, fraction: Double) -> Coordinate {
+        let angularDistance = distanceMeters(from, to) / earthRadiusMeters
+        guard angularDistance > 0 else { return from }
+        let lat1 = from.latitude * .pi / 180, lon1 = from.longitude * .pi / 180
+        let lat2 = to.latitude * .pi / 180, lon2 = to.longitude * .pi / 180
+        let a = sin((1 - fraction) * angularDistance) / sin(angularDistance)
+        let b = sin(fraction * angularDistance) / sin(angularDistance)
+        let x = a * cos(lat1) * cos(lon1) + b * cos(lat2) * cos(lon2)
+        let y = a * cos(lat1) * sin(lon1) + b * cos(lat2) * sin(lon2)
+        let z = a * sin(lat1) + b * sin(lat2)
+        let lat = atan2(z, (x * x + y * y).squareRoot())
+        let lon = atan2(y, x)
+        return Coordinate(latitude: lat * 180 / .pi, longitude: lon * 180 / .pi)
+    }
+
     // MARK: - Containment
 
     static func contains(_ boundary: Boundary, point: Coordinate) -> Bool {

@@ -17,6 +17,32 @@ final class GeoMathTests: XCTestCase {
         XCTAssertEqual(GeoMath.distanceMeters(park, park), 0, accuracy: 0.001)
     }
 
+    func testIntermediateEndpoints() {
+        let sf = Coordinate(latitude: 37.7749, longitude: -122.4194)
+        let la = Coordinate(latitude: 34.0522, longitude: -118.2437)
+        let start = GeoMath.intermediate(from: sf, to: la, fraction: 0)
+        let end = GeoMath.intermediate(from: sf, to: la, fraction: 1)
+        XCTAssertEqual(start.latitude, sf.latitude, accuracy: 0.001)
+        XCTAssertEqual(start.longitude, sf.longitude, accuracy: 0.001)
+        XCTAssertEqual(end.latitude, la.latitude, accuracy: 0.001)
+        XCTAssertEqual(end.longitude, la.longitude, accuracy: 0.001)
+    }
+
+    func testIntermediateMidpointIsBetween() {
+        let sf = Coordinate(latitude: 37.7749, longitude: -122.4194)
+        let la = Coordinate(latitude: 34.0522, longitude: -118.2437)
+        let mid = GeoMath.intermediate(from: sf, to: la, fraction: 0.5)
+        // Midpoint should be roughly half the total distance from each end.
+        let total = GeoMath.distanceMeters(sf, la)
+        XCTAssertEqual(GeoMath.distanceMeters(sf, mid), total / 2, accuracy: total * 0.02)
+        XCTAssertEqual(GeoMath.distanceMeters(mid, la), total / 2, accuracy: total * 0.02)
+    }
+
+    func testIntermediateSamePointIsStable() {
+        XCTAssertEqual(GeoMath.intermediate(from: park, to: park, fraction: 0.5).latitude,
+                       park.latitude, accuracy: 0.0001)
+    }
+
     func testBearingCardinalDirections() {
         let origin = Coordinate(latitude: 0, longitude: 0)
         XCTAssertEqual(GeoMath.bearingDegrees(from: origin, to: Coordinate(latitude: 1, longitude: 0)), 0, accuracy: 0.5)

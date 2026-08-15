@@ -144,6 +144,12 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(lastRadioIdentifier, forKey: "lastRadioIdentifier") }
     }
 
+    /// Height of the user's own antenna above ground, in meters — used by the
+    /// Tools → Line of sight terrain profile.
+    @Published var myAntennaHeightMeters: Double {
+        didSet { defaults.set(myAntennaHeightMeters, forKey: "myAntennaHeightMeters") }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         let storedInterval = defaults.double(forKey: "updateInterval")
@@ -164,5 +170,7 @@ final class AppSettings: ObservableObject {
         appearance = AppearanceOverride(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .system
         activeMode = defaults.string(forKey: "activeMode") ?? "fellship"
         lastRadioIdentifier = defaults.string(forKey: "lastRadioIdentifier")
+        let storedAntennaHeight = defaults.double(forKey: "myAntennaHeightMeters")
+        myAntennaHeightMeters = storedAntennaHeight > 0 ? storedAntennaHeight : 2
     }
 }

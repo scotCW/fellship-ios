@@ -155,9 +155,10 @@ struct ClassicContactDetailView: View {
             Button("Log in") {
                 Task { await classic.login(contact: contact, password: password) }
             }
-            .disabled(password.isEmpty)
         } header: {
             Text("Repeater access")
+        } footer: {
+            Text("Leave the password blank for repeaters configured with open guest access.")
         }
 
         Section {

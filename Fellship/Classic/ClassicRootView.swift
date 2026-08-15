@@ -59,10 +59,28 @@ struct ClassicChannelView: View {
     @EnvironmentObject private var classic: ClassicStore
     @EnvironmentObject private var app: AppState
     @State private var draft = ""
+    @State private var showSendFailure = false
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                if showSendFailure {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text("Message didn't send. Restored to the composer.")
+                            .font(.footnote)
+                        Spacer()
+                        Button {
+                            showSendFailure = false
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                }
                 if classic.channelMessages.isEmpty {
                     EmptyStateView(systemImage: "megaphone",
                                    title: "Public channel",
@@ -96,6 +114,12 @@ struct ClassicChannelView: View {
             }
             .navigationTitle("Public channel")
             .navigationBarTitleDisplayMode(.inline)
+            .onChange(of: classic.channelSendError) { _, failed in
+                guard let failed else { return }
+                if draft.isEmpty { draft = failed }
+                showSendFailure = true
+                classic.channelSendError = nil
+            }
         }
     }
 

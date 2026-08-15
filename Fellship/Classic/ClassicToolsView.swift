@@ -334,9 +334,20 @@ struct LineOfSightView: View {
     @EnvironmentObject private var settings: AppSettings
 
     @State private var selectedKey: Data?
+    @State private var theirAntennaHeightMeters: Double = 2
+    @State private var profile: [TerrainService.Sample] = []
+    @State private var loadingTerrain = false
+    @State private var terrainError: String?
+    /// The node key + antenna heights the current `profile` was fetched for,
+    /// so a stale profile can't be shown against a changed selection.
+    @State private var profileKey: String?
 
     private var positionedNodes: [MeshCore.Contact] {
         engine.nearbyContacts.filter { $0.coordinate.isPlausible }
+    }
+
+    private var selectedContact: MeshCore.Contact? {
+        positionedNodes.first { $0.publicKey == selectedKey }
     }
 
     var body: some View {
@@ -357,8 +368,7 @@ struct LineOfSightView: View {
                 }
             }
 
-            if let contact = positionedNodes.first(where: { $0.publicKey == selectedKey }),
-               let mine = location.lastFix?.coordinate {
+            if let contact = selectedContact, let mine = location.lastFix?.coordinate {
                 let distance = GeoMath.distanceMeters(mine, contact.coordinate)
                 let bearing = GeoMath.bearingDegrees(from: mine, to: contact.coordinate)
                 // Earth-curvature bulge at the midpoint of the path.
@@ -374,15 +384,141 @@ struct LineOfSightView: View {
                     LabeledContent("60% Fresnel clearance needed",
                                    value: Format.distance(fresnel60, units: settings.units))
                 }
+
+                Section("Antenna heights (above ground)") {
+                    Stepper(value: $settings.myAntennaHeightMeters, in: 0.5...60, step: 0.5) {
+                        LabeledContent("Yours", value: String(format: "%.1f m", settings.myAntennaHeightMeters))
+                    }
+                    Stepper(value: $theirAntennaHeightMeters, in: 0.5...60, step: 0.5) {
+                        LabeledContent(contact.name.isEmpty ? "Theirs" : contact.name,
+                                       value: String(format: "%.1f m", theirAntennaHeightMeters))
+                    }
+                }
+
                 Section {
-                    Text("Terrain is not included — a full line-of-sight profile needs elevation data, which requires an online elevation service. These figures assume smooth earth: your antennas together need to clear roughly the bulge plus the Fresnel figure above at the midpoint.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    Button {
+                        Task { await fetchTerrain(mine: mine, theirs: contact.coordinate) }
+                    } label: {
+                        if loadingTerrain {
+                            HStack { ProgressView(); Text("Checking terrain…") }
+                        } else {
+                            Label("Check terrain profile", systemImage: "mountain.2")
+                        }
+                    }
+                    .disabled(loadingTerrain)
+
+                    if let terrainError {
+                        Text(terrainError).font(.footnote).foregroundStyle(.red)
+                    }
+
+                    if let result = terrainVerdict(distance: distance) {
+                        TerrainProfileChart(profile: profile,
+                                            txHeight: result.txHeight, rxHeight: result.rxHeight,
+                                            earthRadius: GeoMath.earthRadiusMeters,
+                                            totalDistance: distance)
+                            .frame(height: 140)
+                        Label(result.clear ? "Path looks clear" : "Terrain likely blocks this path",
+                              systemImage: result.clear ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(result.clear ? .green : .red)
+                        Text("Elevation from open-meteo.com (SRTM), sampled along the great-circle path. Assumes 60% first-Fresnel-zone clearance at 910 MHz; foliage, buildings and weather aren't in this data.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Terrain isn't loaded yet — tap above to fetch an elevation profile from a free, keyless elevation service (open-meteo.com). This is the only Tools feature that contacts the internet, and only when you ask for it.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
         }
         .navigationTitle("Line of sight")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: selectedKey) { profile = []; profileKey = nil; terrainError = nil }
+    }
+
+    private struct Verdict { let clear: Bool; let txHeight: Double; let rxHeight: Double }
+
+    /// Nil until a profile has been fetched for the currently-selected node.
+    private func terrainVerdict(distance: Double) -> Verdict? {
+        guard !profile.isEmpty, let contact = selectedContact,
+              profileKey == currentProfileKey(contact: contact) else { return nil }
+        guard let base = profile.first?.elevationMeters, let peak = profile.last?.elevationMeters else { return nil }
+        let txHeight = base + settings.myAntennaHeightMeters
+        let rxHeight = peak + theirAntennaHeightMeters
+        let clear = !profile.enumerated().contains { index, sample in
+            let x = distance * Double(index) / Double(profile.count - 1)
+            let lineHeight = txHeight + (rxHeight - txHeight) * (x / distance)
+            let bulge = x * (distance - x) / (2 * GeoMath.earthRadiusMeters)
+            let d1km = x / 1000, d2km = (distance - x) / 1000, dkm = distance / 1000
+            let fresnel = dkm > 0 ? 0.6 * 17.32 * ((d1km * d2km) / max(0.001, 0.910 * dkm)).squareRoot() : 0
+            return sample.elevationMeters + fresnel > lineHeight - bulge
+        }
+        return Verdict(clear: clear, txHeight: txHeight, rxHeight: rxHeight)
+    }
+
+    private func currentProfileKey(contact: MeshCore.Contact) -> String {
+        "\(contact.publicKey.hexEncoded)|\(settings.myAntennaHeightMeters)|\(theirAntennaHeightMeters)"
+    }
+
+    private func fetchTerrain(mine: Coordinate, theirs: Coordinate) async {
+        guard let contact = selectedContact else { return }
+        loadingTerrain = true
+        terrainError = nil
+        do {
+            profile = try await TerrainService.elevationProfile(from: mine, to: theirs)
+            profileKey = currentProfileKey(contact: contact)
+        } catch {
+            profile = []
+            profileKey = nil
+            terrainError = "Couldn't reach the elevation service — check your connection and try again."
+        }
+        loadingTerrain = false
+    }
+}
+
+/// Draws the terrain profile against the straight radio path (curvature-
+/// adjusted), shading the ground so obstruction is visible at a glance.
+private struct TerrainProfileChart: View {
+    let profile: [TerrainService.Sample]
+    let txHeight: Double
+    let rxHeight: Double
+    let earthRadius: Double
+    let totalDistance: Double
+
+    var body: some View {
+        Canvas { context, size in
+            guard profile.count > 1 else { return }
+            let groundElevations = profile.map(\.elevationMeters)
+            let lineHeights: [Double] = (0..<profile.count).map { i in
+                let x = totalDistance * Double(i) / Double(profile.count - 1)
+                let bulge = x * (totalDistance - x) / (2 * earthRadius)
+                return (txHeight + (rxHeight - txHeight) * (x / max(1, totalDistance))) - bulge
+            }
+            let allValues = groundElevations + lineHeights + [txHeight, rxHeight]
+            guard let minV = allValues.min(), let maxV = allValues.max(), maxV > minV else { return }
+            let pad = (maxV - minV) * 0.1 + 1
+            let lo = minV - pad, hi = maxV + pad
+
+            func point(_ i: Int, _ value: Double) -> CGPoint {
+                let x = size.width * CGFloat(i) / CGFloat(profile.count - 1)
+                let y = size.height * (1 - CGFloat((value - lo) / (hi - lo)))
+                return CGPoint(x: x, y: y)
+            }
+
+            var groundPath = Path()
+            groundPath.move(to: CGPoint(x: 0, y: size.height))
+            for (i, e) in groundElevations.enumerated() { groundPath.addLine(to: point(i, e)) }
+            groundPath.addLine(to: CGPoint(x: size.width, y: size.height))
+            groundPath.closeSubpath()
+            context.fill(groundPath, with: .color(.brown.opacity(0.35)))
+
+            var linePath = Path()
+            linePath.move(to: point(0, lineHeights[0]))
+            for (i, h) in lineHeights.enumerated() where i > 0 { linePath.addLine(to: point(i, h)) }
+            context.stroke(linePath, with: .color(.accentColor), lineWidth: 2)
+        }
+        .background(Color(.secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 

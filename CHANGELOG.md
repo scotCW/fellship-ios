@@ -7,6 +7,22 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Added
+- Tools → Line of sight now fetches a real elevation profile between you and
+  the selected node from a free, keyless elevation service (open-meteo.com),
+  with editable antenna heights and a terrain chart showing whether the path
+  clears the ground plus 60% Fresnel-zone clearance. It's the only network
+  call in Tools and only fires when you tap "Check terrain profile."
+
+### Fixed
+- Repeater login no longer requires a password to be typed — some repeaters
+  are configured for open guest access with a blank password, and the Log in
+  button was wrongly disabled until you typed something.
+- MeshCore public channel: on real hardware, some firmware acknowledges a
+  channel send with a plain OK instead of echoing a SendResult. The app was
+  treating that as a failed send and silently dropping the message you just
+  typed (which had already gone out over the mesh) from your own history.
+
 ## [1.0.1] — 2026-07-07
 
 ### Added
