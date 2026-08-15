@@ -6,7 +6,6 @@ import SwiftUI
 /// user's Keychain (spec §7).
 enum TileSourceKind: String, CaseIterable, Identifiable, Codable {
     case openStreetMap
-    case nasaSatellite
     case custom
 
     var id: String { rawValue }
@@ -14,10 +13,14 @@ enum TileSourceKind: String, CaseIterable, Identifiable, Codable {
     var displayName: String {
         switch self {
         case .openStreetMap: return "OpenStreetMap"
-        case .nasaSatellite: return "NASA satellite"
         case .custom: return "Custom provider"
         }
     }
+
+    /// Raw value of the retired NASA GIBS source. Its imagery was too coarse
+    /// (~250 m/px) to be worth keeping; anyone still stored on it is migrated
+    /// back to the default on next launch.
+    static let retiredNASARawValue = "nasaSatellite"
 }
 
 /// App-wide accent themes. All free, forever — theming is not a thing anyone
@@ -58,7 +61,7 @@ final class AppSettings: ObservableObject {
     /// Shown in Settings → Support this app, with tap-to-copy and a QR code.
     /// No payment plumbing, no server — just the owner's address (spec §10).
     static let donationCryptoCurrency = "Monero (XMR)"
-    static let donationCryptoAddress = "85f9zpwoRWbaZsZToh44Aei9qohnEVS6KB8yjjQRbmvUEUKkYnD5jvy368xTjHgbRq7DvbpXz3xgmaqaCR6hCxLnA8B3k3A"
+    static let donationCryptoAddress = "89Ztm2qYsiBFNfBg4gPYTxBwmtYtmDveBUFV5UfCo8B2Uwv1EtnXM5DVjEnuwfgYXCL13YDQ8chD1hYVo7sKGb3gCDi1x5U"
 
     private let defaults: UserDefaults
     private let keychain = KeychainStore(service: "app.fellship.settings")
@@ -155,7 +158,12 @@ final class AppSettings: ObservableObject {
         let storedInterval = defaults.double(forKey: "updateInterval")
         updateIntervalSeconds = storedInterval == 0 ? 60 : storedInterval
         publicRoomAlerts = defaults.bool(forKey: "publicRoomAlerts")
+        // A stored "nasaSatellite" no longer resolves, so it lands on the
+        // default here — which is exactly the intended migration.
         tileSource = TileSourceKind(rawValue: defaults.string(forKey: "tileSource") ?? "") ?? .openStreetMap
+        if defaults.string(forKey: "tileSource") == TileSourceKind.retiredNASARawValue {
+            defaults.set(TileSourceKind.openStreetMap.rawValue, forKey: "tileSource")
+        }
         customTileTemplate = keychain.load(Self.customTemplateKey).flatMap { String(data: $0, encoding: .utf8) } ?? ""
         customAPIDisclaimerShown = defaults.bool(forKey: "customAPIDisclaimerShown")
         units = DistanceUnits(rawValue: defaults.string(forKey: "units") ?? "") ?? .imperial

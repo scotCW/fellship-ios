@@ -138,11 +138,16 @@ final class StoreAndDomainTests: XCTestCase {
         XCTAssertFalse(TileSourceResolver.isValidTemplate(""))
     }
 
-    func testNasaTemplateUsesYesterdayUTC() {
-        let template = TileSourceResolver.nasaTileTemplate(date: Date(timeIntervalSince1970: 1_750_000_000))
-        XCTAssertTrue(template.contains("gibs.earthdata.nasa.gov"))
-        XCTAssertTrue(template.contains("{z}/{y}/{x}"))
-        // 1_750_000_000 = 2025-06-15 UTC → yesterday = 2025-06-14.
-        XCTAssertTrue(template.contains("2025-06-14"))
+    /// The retired NASA GIBS source must not resurrect from stored settings.
+    @MainActor
+    func testRetiredNASATileSourceMigratesToDefault() {
+        let defaults = UserDefaults(suiteName: "fellship.tests.tilesource")!
+        defaults.removePersistentDomain(forName: "fellship.tests.tilesource")
+        defaults.set(TileSourceKind.retiredNASARawValue, forKey: "tileSource")
+
+        let settings = AppSettings(defaults: defaults)
+        XCTAssertEqual(settings.tileSource, .openStreetMap)
+        XCTAssertEqual(defaults.string(forKey: "tileSource"), TileSourceKind.openStreetMap.rawValue)
+        XCTAssertFalse(TileSourceKind.allCases.contains { $0.rawValue == TileSourceKind.retiredNASARawValue })
     }
 }

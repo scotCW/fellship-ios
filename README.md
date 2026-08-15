@@ -35,8 +35,8 @@ lives on members' devices and travels radio-to-radio over the LoRa mesh.
   public room whose zone you're standing in send you an invite automatically.
   Joining always requires your explicit accept.
 - **Offline maps** — MapLibre GL rendering OpenStreetMap (via OpenFreeMap, no
-  key), NASA GIBS satellite imagery (no key), or your own tile provider with
-  your own API key. Download any region + zoom range for full offline use.
+  key), or your own tile provider with your own API key. Download any region +
+  zoom range for full offline use.
 - **Radio GPS first** — position comes from the radio's GPS over BLE, with
   the phone as an explicit, labeled fallback. One global update interval;
   one GPS read shared by everything (rooms, beacons, the map).
@@ -95,11 +95,11 @@ Design constraints inherited from the spec (and enforced in code):
 
 ## Spec deviations & practical limits (honest notes)
 
-- **NASA imagery resolution** — the original spec hoped for ~10 m Sentinel-2 /
-  Landsat imagery via GIBS. GIBS's *global, reliable, keyless* layer is the
-  VIIRS daily true-color composite at roughly 250 m/pixel, so that's the
-  default; the UI says so plainly. (GIBS HLS layers are ~30 m but have sparse
-  daily swath coverage, which makes a terrible browsing layer.)
+- **No satellite layer** — the original spec hoped for ~10 m Sentinel-2 /
+  Landsat imagery. The only *global, reliable, keyless* option (NASA GIBS's
+  VIIRS daily composite) is roughly 250 m/pixel, which proved too coarse to be
+  worth having, so it was removed in 1.1.1. Bring your own provider if you
+  need imagery.
 - **Message length** — LoRa frames are tiny. Room messages are capped at 120
   characters (the composer shows a counter), direct messages at 140. Encrypted
   room traffic is hand-packed binary specifically to fit stock MeshCore text

@@ -108,19 +108,36 @@ final class ClassicStore: ObservableObject {
 
     // MARK: - Public channel chat
 
+    /// Splits MeshCore's `"Name: message"` channel convention into its parts.
+    /// Accepts `"Name:message"` too (not every client adds the space), and
+    /// refuses anything that doesn't plausibly look like a display name so a
+    /// bare URL or a timestamped line can't be mistaken for a sender.
+    nonisolated static func splitSenderPrefix(_ text: String) -> (sender: String, body: String)? {
+        guard let colon = text.firstIndex(of: ":") else { return nil }
+        let candidate = String(text[text.startIndex..<colon])
+        guard !candidate.isEmpty, candidate.count <= 32,
+              !candidate.contains("\n"),
+              !candidate.contains("/"),      // "https://…" → not a name
+              !candidate.contains(":")
+        else { return nil }
+        var body = String(text[text.index(after: colon)...])
+        // "https://…" splits into ("https", "//example.com") — the giveaway is
+        // the scheme separator, not the name.
+        guard !body.hasPrefix("//") else { return nil }
+        if body.hasPrefix(" ") { body.removeFirst() }
+        guard !body.isEmpty else { return nil }
+        return (candidate, body)
+    }
+
     private func appendChannel(_ text: String, sentAt: Date, fromMe: Bool) {
-        // MeshCore convention: channel senders prefix "Name: message". Only
-        // honor it when it actually looks like a name — "https://…" must not
-        // become a sender called "https".
+        // MeshCore convention: channel senders prefix "Name: message". The
+        // name is rendered above the bubble, so it must not also remain in the
+        // body — otherwise every message reads "Colin: Colin: hi".
         var sender = fromMe ? settings.displayName : ""
         var body = text
-        if !fromMe, let range = text.range(of: ": ") {
-            let candidate = String(text[..<range.lowerBound])
-            if !candidate.isEmpty, candidate.count <= 32,
-               !candidate.contains("\n"), !candidate.contains("/") {
-                sender = candidate
-                body = String(text[range.upperBound...])
-            }
+        if !fromMe, let split = Self.splitSenderPrefix(text) {
+            sender = split.sender
+            body = split.body
         }
         // Radios without a clock stamp messages near the epoch; show a
         // sane local time instead.

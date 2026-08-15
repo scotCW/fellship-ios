@@ -294,4 +294,31 @@ final class ClassicModeTests: XCTestCase {
         XCTAssertTrue(store.channelMessages.isEmpty)
         XCTAssertEqual(ClassicStore.channelThreadID, "mc-public-channel")
     }
+
+    /// The sender name is drawn above the bubble, so it must be stripped from
+    /// the body — with and without the conventional space after the colon.
+    func testSenderPrefixStrippedFromBody() {
+        let withSpace = ClassicStore.splitSenderPrefix("Colin: heading out now")
+        XCTAssertEqual(withSpace?.sender, "Colin")
+        XCTAssertEqual(withSpace?.body, "heading out now")
+
+        let noSpace = ClassicStore.splitSenderPrefix("Colin:heading out")
+        XCTAssertEqual(noSpace?.sender, "Colin")
+        XCTAssertEqual(noSpace?.body, "heading out")
+
+        let spacedName = ClassicStore.splitSenderPrefix("Ridge Repeater: online")
+        XCTAssertEqual(spacedName?.sender, "Ridge Repeater")
+        XCTAssertEqual(spacedName?.body, "online")
+    }
+
+    func testSenderPrefixRejectsNonNames() {
+        // A bare URL must not become a sender called "https".
+        XCTAssertNil(ClassicStore.splitSenderPrefix("https://example.com/x"))
+        // No colon at all → whole thing is the body.
+        XCTAssertNil(ClassicStore.splitSenderPrefix("just a message"))
+        // Nothing after the colon is not a name/body split.
+        XCTAssertNil(ClassicStore.splitSenderPrefix("Colin:"))
+        // Absurdly long "names" are not names.
+        XCTAssertNil(ClassicStore.splitSenderPrefix(String(repeating: "x", count: 40) + ": hi"))
+    }
 }

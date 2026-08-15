@@ -175,11 +175,6 @@ struct SettingsView: View {
                     Text(kind.displayName).tag(kind)
                 }
             }
-            if settings.tileSource == .nasaSatellite {
-                Text(MapDisclaimers.nasaResolution)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
             if settings.tileSource == .custom {
                 VStack(alignment: .leading, spacing: 6) {
                     TextField("Tile URL template with {z}/{x}/{y} and your key",

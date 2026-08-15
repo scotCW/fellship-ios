@@ -25,6 +25,12 @@ final class LocationService: NSObject, ObservableObject {
     private var radioConnected = false
     private var lastPhoneLocation: CLLocation?
     private var intervalSeconds: TimeInterval = 60
+    /// Whether the connected radio actually produced a usable fix on the most
+    /// recent read. Plenty of MeshCore boards ship with no GPS at all, so
+    /// "a radio is connected" must never by itself imply we have a position.
+    private var radioGPSWorking = false
+    /// Mirrors CoreLocation's state so we only start/stop it on real changes.
+    private var phoneUpdatesRunning = false
 
     override init() {
         super.init()
@@ -41,14 +47,41 @@ final class LocationService: NSObject, ObservableObject {
 
     func setRadioConnected(_ connected: Bool) {
         radioConnected = connected
-        // The phone's GPS runs continuously only while it's the active
-        // source; with radio GPS primary, keeping CoreLocation streaming
-        // would just burn battery (spec §4's fallback is explicit).
-        if connected {
-            manager.stopUpdatingLocation()
-        } else if authorization == .authorizedWhenInUse || authorization == .authorizedAlways {
+        // Connecting a radio does NOT prove it has a GPS. Assume it doesn't
+        // until a read succeeds, so a GPS-less radio can't leave us with no
+        // position at all (which would silently break zone presence).
+        if !connected { radioGPSWorking = false }
+        syncPhoneUpdates()
+    }
+
+    /// The phone's GPS runs whenever it's actually needed: no radio, or a
+    /// radio that isn't returning a usable position. Once radio GPS proves
+    /// itself, CoreLocation is stopped again to save battery (spec §4).
+    private func syncPhoneUpdates() {
+        let authorized = authorization == .authorizedWhenInUse || authorization == .authorizedAlways
+        let shouldRun = authorized && !(radioConnected && radioGPSWorking)
+        guard shouldRun != phoneUpdatesRunning else { return }
+        phoneUpdatesRunning = shouldRun
+        if shouldRun {
             manager.startUpdatingLocation()
+        } else {
+            manager.stopUpdatingLocation()
         }
+    }
+
+    /// Freshest phone position available. A stationary phone doesn't trip the
+    /// distance filter, so the delegate can go quiet for a long time while the
+    /// fix is still perfectly valid — CoreLocation's own cached `location`
+    /// covers that case.
+    private func bestPhoneLocation() -> CLLocation? {
+        let newest = [lastPhoneLocation, manager.location]
+            .compactMap { $0 }
+            .max { $0.timestamp < $1.timestamp }
+        guard let newest,
+              newest.horizontalAccuracy >= 0,
+              Date().timeIntervalSince(newest.timestamp) < max(intervalSeconds * 3, 300)
+        else { return nil }
+        return newest
     }
 
     func requestWhenInUseAuthorization() {
@@ -72,10 +105,7 @@ final class LocationService: NSObject, ObservableObject {
     func start(intervalSeconds: TimeInterval) {
         self.intervalSeconds = max(10, intervalSeconds)
         timer?.invalidate()
-        if !radioConnected,
-           authorization == .authorizedWhenInUse || authorization == .authorizedAlways {
-            manager.startUpdatingLocation()
-        }
+        syncPhoneUpdates()
         let t = Timer(timeInterval: self.intervalSeconds, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.tick() }
         }
@@ -92,6 +122,7 @@ final class LocationService: NSObject, ObservableObject {
     func stop() {
         timer?.invalidate()
         timer = nil
+        phoneUpdatesRunning = false
         manager.stopUpdatingLocation()
     }
 
@@ -121,11 +152,16 @@ final class LocationService: NSObject, ObservableObject {
             if let info = try? await session.refreshSelfInfo(),
                info.advertCoordinate.isPlausible {
                 fix = LocationFix(coordinate: info.advertCoordinate, source: .radio, timestamp: Date())
+                radioGPSWorking = true
+            } else {
+                // Radio has no GPS, or hasn't got a lock yet — fall back to
+                // the phone rather than reporting no position at all.
+                radioGPSWorking = false
             }
+            syncPhoneUpdates()
         }
 
-        if fix == nil, let phone = lastPhoneLocation,
-           Date().timeIntervalSince(phone.timestamp) < max(intervalSeconds * 2, 120) {
+        if fix == nil, let phone = bestPhoneLocation() {
             fix = LocationFix(coordinate: Coordinate(latitude: phone.coordinate.latitude,
                                                      longitude: phone.coordinate.longitude),
                               source: .phone, timestamp: phone.timestamp)
@@ -146,9 +182,7 @@ extension LocationService: CLLocationManagerDelegate {
         let status = manager.authorizationStatus
         Task { @MainActor in
             self.authorization = status
-            if status == .authorizedWhenInUse || status == .authorizedAlways {
-                self.setRadioConnected(self.radioConnected) // re-evaluate GPS source
-            }
+            self.syncPhoneUpdates() // re-evaluate GPS source
         }
     }
 

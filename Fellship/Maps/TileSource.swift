@@ -1,8 +1,8 @@
 import Foundation
 
 /// Resolves the user's tile-source choice into a MapLibre style URL.
-/// Three options (spec §7): OpenStreetMap vector tiles (default, no key),
-/// NASA GIBS satellite imagery (no key), or the user's own provider.
+/// Two options (spec §7): OpenStreetMap vector tiles (default, no key), or
+/// the user's own provider.
 enum TileSourceResolver {
     /// OpenFreeMap serves OpenStreetMap-based vector tiles free of charge,
     /// with no API key and no registration — which is what keeps the map
@@ -10,21 +10,6 @@ enum TileSourceResolver {
     static let openStreetMapStyle = URL(string: "https://tiles.openfreemap.org/styles/liberty")!
 
     static let osmAttribution = "© OpenFreeMap · © OpenMapTiles · © OpenStreetMap contributors"
-    static let nasaAttribution = "Imagery courtesy NASA GIBS / VIIRS"
-
-    /// NASA GIBS raster tiles (global daily true-color composite). Capped at
-    /// zoom 9 — this is genuinely lower resolution than commercial satellite
-    /// imagery and the UI says so plainly.
-    static func nasaTileTemplate(date: Date = Date()) -> String {
-        // Yesterday's composite is reliably complete; today's may be partial.
-        let yesterday = Calendar(identifier: .gregorian)
-            .date(byAdding: .day, value: -1, to: date) ?? date
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        let day = formatter.string(from: yesterday)
-        return "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/\(day)/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg"
-    }
 
     /// Builds a minimal MapLibre style JSON around a raster XYZ template and
     /// returns it as a file URL (MapLibre loads styles by URL).
@@ -71,12 +56,6 @@ enum TileSourceResolver {
         switch kind {
         case .openStreetMap:
             return (openStreetMapStyle, osmAttribution)
-        case .nasaSatellite:
-            let template = nasaTileTemplate()
-            let url = rasterStyleURL(template: template, maxZoom: 9,
-                                     attribution: nasaAttribution, cacheKey: "nasa")
-                ?? openStreetMapStyle
-            return (url, nasaAttribution)
         case .custom:
             let trimmed = customTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmed.contains("{z}"), trimmed.contains("{x}"), trimmed.contains("{y}"),
@@ -119,10 +98,5 @@ enum MapDisclaimers {
     static let customShort = """
     Your key stays on your device. Offline caching may violate your provider's terms — \
     you're responsible for your account.
-    """
-
-    static let nasaResolution = """
-    NASA imagery is a free global composite (roughly 250 m per pixel). Expect far less \
-    detail than commercial satellite maps.
     """
 }

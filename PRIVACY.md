@@ -22,7 +22,7 @@ Fellship is: **the data never leaves your device or your mesh.**
 Two things, both opt-in by how you use the app:
 
 - **Map tiles.** When you view or download maps, tile requests go to the map
-  provider you selected (OpenFreeMap, NASA GIBS, or your own provider). Those
+  provider you selected (OpenFreeMap, or your own provider). Those
   requests necessarily reveal your IP address and the map areas you request
   to that provider, governed by their privacy policies. Offline map downloads
   exist precisely so you can do this once at home and never again in the
