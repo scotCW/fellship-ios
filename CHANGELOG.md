@@ -7,31 +7,66 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
-### Added
-- Tools → Line of sight now fetches a real elevation profile between you and
-  the selected node from a free, keyless elevation service (open-meteo.com),
-  with editable antenna heights and a terrain chart showing whether the path
-  clears the ground plus 60% Fresnel-zone clearance. It's the only network
-  call in Tools and only fires when you tap "Check terrain profile."
+## [1.1.1] — 2026-08-15
 
 ### Fixed
+- **Room presence and messaging with a GPS-less radio.** Connecting a radio
+  stopped the phone's CoreLocation entirely, so a radio with no GPS module
+  (most MeshCore boards) left the app with no position at all. That kept
+  `myInside` false forever, which reports you as outside every room and drops
+  zone-scoped messages on arrival — the likely cause of "messages send with a
+  checkmark but nobody receives them". Phone GPS now runs whenever the radio
+  isn't returning a usable fix, and a stationary phone (which never trips the
+  distance filter) still counts as having a position.
+- **Contacts not syncing from the radio.** Contacts were read exactly once at
+  connect with no retry, so a single early or failed read left Nodes
+  permanently empty. Now retried with backoff on connect, re-read
+  periodically, and pull-to-refresh.
+- Public/group messages no longer print the sender twice ("Colin: Colin: hi")
+  — the `Name:` prefix is stripped from the body now that the name is drawn
+  above the bubble.
+- Repeater login no longer requires a password, so repeaters configured for
+  open guest access can be used.
+- MeshCore public channel: some firmware acknowledges a channel send with a
+  plain OK instead of echoing a SendResult. The app treated that as a failure
+  and silently dropped the message you'd just typed (which had already gone
+  out over the mesh) from your own history.
 - Archive builds no longer trip App Store Connect's "missing dSYM for
-  MapLibre.framework" warning. MapLibre's precompiled xcframework doesn't
-  bundle a dSYM, but MapLibre Native's GitHub releases publish a matching one
-  at the same version tag — an archive-only build step (`Scripts/fetch-maplibre-dsym.sh`)
-  now fetches it, verifies its UUID against the actually-linked framework
-  binary, and installs it into the archive. Fails soft (falls back to the
-  prior behavior) if offline or the UUID doesn't match.
-- Repeater login no longer requires a password to be typed — some repeaters
-  are configured for open guest access with a blank password, and the Log in
-  button was wrongly disabled until you typed something.
-- Line of sight terrain data was mislabeled as SRTM; it's actually Copernicus
-  DEM GLO-90 (via Open-Meteo). Added the CC BY 4.0 and Copernicus attribution
-  both terms require, on the terrain screen itself and in About → Built on.
-- MeshCore public channel: on real hardware, some firmware acknowledges a
-  channel send with a plain OK instead of echoing a SendResult. The app was
-  treating that as a failed send and silently dropping the message you just
-  typed (which had already gone out over the mesh) from your own history.
+  MapLibre.framework" warning — an archive-only step fetches the matching
+  dSYM from MapLibre's release, verifies its UUID against the linked binary,
+  and installs it. Fails soft if offline or mismatched.
+- Line of sight terrain data was mislabeled as SRTM; it's Copernicus DEM
+  GLO-90 via Open-Meteo. Added the CC BY 4.0 and Copernicus attribution both
+  licenses require, on the terrain screen and in About → Built on.
+- Messages stored by earlier versions still decode after the reactions field
+  was added — Swift's synthesized decoder throws on missing keys rather than
+  using defaults, which would otherwise have wiped chat history on upgrade.
+
+### Added
+- **Message reactions** — long-press a room message to react; reactions
+  travel as their own tiny mesh frame and show as tappable pills.
+- **#channels in MeshCore mode** — join group channels by name (everyone
+  using the same name derives the same key) or with a shared key, each with
+  its own thread. Rooms and channels now allocate radio slots from opposite
+  ends of the same range so they can't overwrite each other.
+- **Room area on a map in room settings**, visible to every member, showing
+  the boundary and whether you're currently inside it.
+- **Telemetry gets its own page**, presented as soon as you request it, plus
+  a "Share my telemetry with" setting (see its note about what the app can
+  and cannot enforce).
+- Contact import/export now has real destinations: copy, share sheet, the raw
+  code beside the QR, bulk "Export all contacts", and pasting a whole list.
+- Tools → Line of sight fetches a real elevation profile between you and the
+  selected node (Copernicus DEM GLO-90 via open-meteo.com), with editable
+  antenna heights and a terrain chart showing whether the path clears the
+  ground plus 60% Fresnel-zone clearance. User-triggered only.
+
+### Changed
+- Geofenced rooms are inside-only for sending. An unknown position warns
+  rather than muting you.
+- Removed the NASA GIBS satellite layer (~250 m/px, not worth keeping);
+  anyone using it moves back to OpenStreetMap.
+- New Monero donation address.
 
 ## [1.0.1] — 2026-07-07
 
@@ -103,6 +138,7 @@ First release.
   loses its slot until active again.
 - Room messages are capped at 120 characters (LoRa frame budget).
 
-[Unreleased]: https://github.com/scotCW/fellship-ios/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/scotCW/fellship-ios/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/scotCW/fellship-ios/compare/v1.0.1...v1.1.1
 [1.0.1]: https://github.com/scotCW/fellship-ios/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/scotCW/fellship-ios/releases/tag/v1.0.0

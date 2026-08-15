@@ -45,7 +45,8 @@ struct ChatView: View {
                                                   { emoji in
                                                       Task { await engine.toggleReaction(emoji, on: message, in: room) }
                                                   }
-                                              })
+                                              },
+                                              myMemberID: engine.myIdentityHex)
                                 if message.isFromMe, message.scope == .direct,
                                    message.delivery == .timedOut {
                                     Button {
@@ -176,6 +177,10 @@ struct MessageBubble: View {
     /// pass nil and render without the reaction affordance.
     var room: Room?
     var onReact: ((String) -> Void)?
+    /// My member ID, so the picker can show which reactions are already mine.
+    var myMemberID: String = ""
+
+    @State private var showPicker = false
 
     var body: some View {
         if message.isSystemEvent {
@@ -206,16 +211,23 @@ struct MessageBubble: View {
                     .background(message.isFromMe ? Color.accentColor : Color(.secondarySystemBackground),
                                 in: RoundedRectangle(cornerRadius: 16))
                     .foregroundStyle(message.isFromMe ? .white : .primary)
-                    .contextMenu {
-                        if onReact != nil {
-                            ForEach(RoomEngine.quickReactions, id: \.self) { emoji in
-                                Button {
-                                    onReact?(emoji)
-                                } label: {
-                                    Text("\(emoji)  React")
-                                }
-                            }
+                    // A custom picker rather than .contextMenu: emoji in
+                    // context-menu labels render as missing-glyph boxes,
+                    // which is useless for a reaction picker.
+                    .onLongPressGesture {
+                        guard onReact != nil else { return }
+                        showPicker = true
+                    }
+                    .popover(isPresented: $showPicker,
+                             attachmentAnchor: .point(.top),
+                             arrowEdge: .top) {
+                        ReactionPicker(selected: message.reactions.compactMap { entry in
+                            entry.value.contains(myMemberID) ? entry.key : nil
+                        }) { emoji in
+                            showPicker = false
+                            onReact?(emoji)
                         }
+                        .presentationCompactAdaptation(.popover)
                     }
                     if !message.sortedReactions.isEmpty {
                         ReactionRow(message: message, onReact: onReact)
@@ -233,6 +245,34 @@ struct MessageBubble: View {
                 if !message.isFromMe { Spacer(minLength: 48) }
             }
         }
+    }
+}
+
+/// Horizontal row of quick reactions, shown in a popover on long-press.
+/// Rendering the emoji as ordinary `Text` in a plain button is what makes
+/// them actually appear — emoji inside context-menu labels do not.
+private struct ReactionPicker: View {
+    let selected: [String]
+    let onPick: (String) -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(RoomEngine.quickReactions, id: \.self) { emoji in
+                Button {
+                    onPick(emoji)
+                } label: {
+                    Text(emoji)
+                        .font(.title2)
+                        .frame(width: 40, height: 40)
+                        .background(selected.contains(emoji) ? Color.accentColor.opacity(0.25) : .clear,
+                                    in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("React with \(emoji)")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
     }
 }
 
