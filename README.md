@@ -117,18 +117,10 @@ those layouts. It has been **verified against physical radios**, alongside
 the unit-test coverage. Everything above the transport also runs identically
 in demo mode, which is how most app-logic iteration happens day to day.
 
-## For the app owner
+## Donations
 
 - Donations show a crypto address in-app (tap-to-copy + QR), configured via
-  `AppSettings.donationCryptoAddress` / `donationCryptoCurrency`. Note for App
-  Store submission: review tends to scrutinize donation mechanics (guideline
-  3.1.1) — be ready to explain that this is a plain informational address with
-  no payment plumbing.
-- App Review: the privacy disclosure lives in Settings → Privacy & your data;
-  the "not a safety device" wording is there too. Review Section 13 of the
-  spec before submitting.
-- Export compliance: the app uses standard encryption (CryptoKit) — answer
-  Apple's encryption questions accordingly.
+  `AppSettings.donationCryptoAddress` / `donationCryptoCurrency`.
 
 ## Classic MeshCore mode
 
