@@ -64,6 +64,16 @@ To use a real radio, pair any board running current stock MeshCore companion
 firmware (Heltec LoRa32, LilyGO T-Beam, RAK WisBlock, …) from
 **Settings → MeshCore radio**. Without hardware, flip on **Demo mode**.
 
+### Releases
+
+Every GitHub release ships an unsigned `.ipa` alongside the source archive —
+built with `Scripts/build-unsigned-ipa.sh`, which archives with code signing
+disabled, verifies the result is genuinely unsigned, and zips it into the
+standard `Payload/Fellship.app` IPA layout. It won't install on a device or
+simulator as-is (no signing identity, no provisioning profile); it exists so
+the exact build for a given tag is available without needing the signing
+team's certificate.
+
 ## Architecture
 
 ```
