@@ -15,6 +15,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   call in Tools and only fires when you tap "Check terrain profile."
 
 ### Fixed
+- Archive builds no longer trip App Store Connect's "missing dSYM for
+  MapLibre.framework" warning. MapLibre's precompiled xcframework doesn't
+  bundle a dSYM, but MapLibre Native's GitHub releases publish a matching one
+  at the same version tag — an archive-only build step (`Scripts/fetch-maplibre-dsym.sh`)
+  now fetches it, verifies its UUID against the actually-linked framework
+  binary, and installs it into the archive. Fails soft (falls back to the
+  prior behavior) if offline or the UUID doesn't match.
 - Repeater login no longer requires a password to be typed — some repeaters
   are configured for open guest access with a blank password, and the Log in
   button was wrongly disabled until you typed something.
