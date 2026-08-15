@@ -118,6 +118,7 @@ struct RoomRow: View {
                         Image(systemName: "bell.slash.fill")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                            .accessibilityLabel("Muted")
                     }
                 }
                 HStack(spacing: 6) {

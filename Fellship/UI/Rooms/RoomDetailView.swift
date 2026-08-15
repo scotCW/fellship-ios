@@ -99,6 +99,7 @@ struct RoomDetailView: View {
 struct MemberStrip: View {
     @EnvironmentObject private var engine: RoomEngine
     @EnvironmentObject private var settings: AppSettings
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     let room: Room
 
     var body: some View {
@@ -118,8 +119,12 @@ struct MemberStrip: View {
                                             .font(.headline)
                                             .foregroundStyle(.white)
                                     }
-                                Circle()
-                                    .fill(presenceColor(member))
+                                // Presence is also stated in the accessibility
+                                // label below (for VoiceOver), and with
+                                // "Differentiate Without Color Alone" on, the
+                                // dot itself switches to a shape cue — a
+                                // colorblind user doesn't need to read hue.
+                                presenceIndicator(member)
                                     .frame(width: 12, height: 12)
                                     .overlay(Circle().stroke(.background, lineWidth: 2))
                             }
@@ -130,19 +135,66 @@ struct MemberStrip: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(member.id == engine.myIdentityHex)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(member.id == engine.myIdentityHex ? "You" : member.displayName), \(presenceDescription(presenceState(member)))")
                 }
             }
             .padding(.vertical, 2)
         }
     }
 
-    private func presenceColor(_ member: Member) -> Color {
+    private enum PresenceState { case inside, outside, unknown }
+
+    /// Single source of truth for a member's presence — color, text, and
+    /// icon are all derived from this so they can't drift apart.
+    private func presenceState(_ member: Member) -> PresenceState {
         if member.id == engine.myIdentityHex {
-            return engine.myInside[room.id] == true || room.kind == .rangeBased ? .green : .gray
+            return (engine.myInside[room.id] == true || room.kind == .rangeBased) ? .inside : .outside
         }
         guard let presence = engine.presence[room.id]?[member.id],
-              presence.isFresh(interval: settings.updateIntervalSeconds) else { return .gray }
-        return presence.isInside ? .green : .yellow
+              presence.isFresh(interval: settings.updateIntervalSeconds) else { return .unknown }
+        return presence.isInside ? .inside : .outside
+    }
+
+    private func presenceColor(_ state: PresenceState) -> Color {
+        switch state {
+        case .inside: return .green
+        case .outside: return .yellow
+        case .unknown: return .gray
+        }
+    }
+
+    /// Text equivalent, so who's currently present isn't conveyed by color
+    /// alone for VoiceOver users.
+    private func presenceDescription(_ state: PresenceState) -> String {
+        switch state {
+        case .inside: return "inside the room"
+        case .outside: return "outside the room"
+        case .unknown: return "presence unknown"
+        }
+    }
+
+    /// Shape equivalent, for sighted users with "Differentiate Without Color
+    /// Alone" turned on — three distinct silhouettes rather than three hues.
+    private func presenceSymbol(_ state: PresenceState) -> String {
+        switch state {
+        case .inside: return "checkmark.circle.fill"
+        case .outside: return "circle"
+        case .unknown: return "questionmark.circle.fill"
+        }
+    }
+
+    @ViewBuilder
+    private func presenceIndicator(_ member: Member) -> some View {
+        let state = presenceState(member)
+        if differentiateWithoutColor {
+            Image(systemName: presenceSymbol(state))
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(presenceColor(state))
+        } else {
+            Circle().fill(presenceColor(state))
+        }
     }
 }
 
@@ -348,6 +400,7 @@ struct InvitePickerSheet: View {
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
+                    .accessibilityLabel("Refresh nearby radios")
                 }
             }
         }

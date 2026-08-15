@@ -248,6 +248,7 @@ struct ClassicChannelView: View {
                             Image(systemName: "xmark.circle.fill")
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Dismiss")
                     }
                     .foregroundStyle(.red)
                     .padding(.horizontal, 12)

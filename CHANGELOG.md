@@ -7,6 +7,24 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Fixed
+- Accessibility, ahead of declaring support in App Store Connect:
+  - The default theme's chat-bubble text failed WCAG AA contrast (3.32:1,
+    needs 4.5:1) — white text on its own accent color, in the app's core
+    messaging screen. Added a contrast-aware foreground helper so every
+    theme's "my message" bubble (and the CLI trace view's "my command"
+    lines) stays legible regardless of which of the 6 accent colors is active.
+  - Member presence dots (who's currently in a room) were color-only, with
+    no icon/shape/text backup — now paired with a VoiceOver label and, with
+    "Differentiate Without Color Alone" on, a distinct shape per state
+    instead of relying on hue.
+  - Adding a reaction was reachable only via long-press, with no
+    VoiceOver/Voice Control equivalent — added a named "React" accessibility
+    action. Existing reaction pills also gained accessibility labels.
+  - A handful of icon-only buttons (refresh-nearby in the invite sheet,
+    dismiss on the send-failure banner, muted-room bell) were missing
+    accessibility labels.
+
 ## [1.0.2] — 2026-08-15
 
 ### Fixed

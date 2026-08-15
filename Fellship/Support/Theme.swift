@@ -23,3 +23,28 @@ extension AppearanceOverride {
         }
     }
 }
+
+extension Color {
+    /// WCAG relative luminance (sRGB → linear, ITU-R BT.709 weights).
+    private var relativeLuminance: Double {
+        let ui = UIColor(self)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        ui.getRed(&r, green: &g, blue: &b, alpha: &a)
+        func linearize(_ c: CGFloat) -> Double {
+            let c = Double(c)
+            return c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b)
+    }
+
+    /// Black or white, whichever gives higher WCAG contrast when used as text
+    /// on top of this color as a background. Used so accent-colored surfaces
+    /// (e.g. the "my message" chat bubble) stay legible under every theme,
+    /// including ones tuned for icon/accent use rather than body text.
+    var accessibleForeground: Color {
+        let bg = relativeLuminance
+        let contrastWithWhite = 1.05 / (bg + 0.05)
+        let contrastWithBlack = (bg + 0.05) / 0.05
+        return contrastWithWhite >= contrastWithBlack ? .white : .black
+    }
+}

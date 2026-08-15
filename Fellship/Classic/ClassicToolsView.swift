@@ -563,9 +563,14 @@ struct CLITerminalView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 3) {
                             ForEach(lines) { line in
-                                Text(line.text)
+                                // A leading "> " marks lines you typed, same
+                                // convention as a real terminal — color alone
+                                // isn't what distinguishes them, and .primary/
+                                // .secondary (rather than the raw theme accent)
+                                // keeps this legible under every theme.
+                                Text((line.isFromMe ? "> " : "") + line.text)
                                     .font(.caption.monospaced())
-                                    .foregroundStyle(line.isFromMe ? Color.accentColor : .primary)
+                                    .foregroundStyle(line.isFromMe ? .primary : .secondary)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .id(line.id)
                             }

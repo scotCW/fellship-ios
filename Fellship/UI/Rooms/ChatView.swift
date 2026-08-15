@@ -172,6 +172,7 @@ struct ChatView: View {
 }
 
 struct MessageBubble: View {
+    @EnvironmentObject private var settings: AppSettings
     let message: RoomMessage
     /// Set for room messages, which support reactions. Direct/channel threads
     /// pass nil and render without the reaction affordance.
@@ -181,6 +182,12 @@ struct MessageBubble: View {
     var myMemberID: String = ""
 
     @State private var showPicker = false
+
+    /// The active theme's accent, used directly (rather than `Color.accentColor`,
+    /// whose resolution against `.tint()` is ambiguous) so the bubble's text
+    /// contrast can be computed against the color actually on screen.
+    private var bubbleBackground: Color { settings.theme.accent }
+    private var bubbleForeground: Color { bubbleBackground.accessibleForeground }
 
     var body: some View {
         if message.isSystemEvent {
@@ -202,19 +209,26 @@ struct MessageBubble: View {
                         if message.scope == .zone {
                             Image(systemName: "scope")
                                 .font(.caption2)
-                                .foregroundStyle(message.isFromMe ? .white.opacity(0.8) : .orange)
+                                .foregroundStyle(message.isFromMe ? bubbleForeground.opacity(0.8) : .orange)
                         }
                         Text(message.text)
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(message.isFromMe ? Color.accentColor : Color(.secondarySystemBackground),
+                    .background(message.isFromMe ? bubbleBackground : Color(.secondarySystemBackground),
                                 in: RoundedRectangle(cornerRadius: 16))
-                    .foregroundStyle(message.isFromMe ? .white : .primary)
+                    .foregroundStyle(message.isFromMe ? bubbleForeground : .primary)
                     // A custom picker rather than .contextMenu: emoji in
                     // context-menu labels render as missing-glyph boxes,
                     // which is useless for a reaction picker.
                     .onLongPressGesture {
+                        guard onReact != nil else { return }
+                        showPicker = true
+                    }
+                    // Long-press has no equivalent for VoiceOver or Voice
+                    // Control — this custom action exposes the same picker
+                    // as a named "React" command/rotor action instead.
+                    .accessibilityAction(named: Text("React")) {
                         guard onReact != nil else { return }
                         showPicker = true
                     }
@@ -302,6 +316,9 @@ private struct ReactionRow: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(onReact == nil)
+                .accessibilityLabel(entry.memberIDs.count > 1
+                                    ? "\(entry.emoji) reaction, \(entry.memberIDs.count) people. Toggle yours."
+                                    : "\(entry.emoji) reaction. Toggle yours.")
             }
         }
         .font(.caption)
