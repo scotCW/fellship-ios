@@ -7,6 +7,19 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Fixed
+- Reduced Motion, ahead of declaring support in App Store Connect:
+  - The Locate Member compass needle rotated continuously and smoothly as
+    heading updates arrived — a textbook "spinning" vestibular trigger. With
+    Reduce Motion on, the needle now freezes pointing up rather than merely
+    softening the animation; the numeric "bearing N°" text already shown
+    carries the same information without motion.
+  - Chat and channel views auto-scrolled to the newest message with an
+    animated glide on every incoming message — automatic, repeated motion
+    the user didn't ask for. Still lands at the bottom with Reduce Motion on,
+    just without the animation.
+  - Onboarding's page-advance transitions also respect the setting.
+
 ## [1.0.3] — 2026-08-15
 
 ### Fixed

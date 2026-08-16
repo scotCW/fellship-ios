@@ -7,6 +7,7 @@ struct LocateMemberView: View {
     @EnvironmentObject private var engine: RoomEngine
     @EnvironmentObject private var location: LocationService
     @EnvironmentObject private var settings: AppSettings
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let room: Room
     let member: Member
 
@@ -26,8 +27,14 @@ struct LocateMemberView: View {
                     Image(systemName: "location.north.fill")
                         .font(.system(size: 64))
                         .foregroundStyle(.teal)
-                        .rotationEffect(.degrees(needle))
-                        .animation(.easeInOut(duration: 0.3), value: needle)
+                        // A live compass needle is a textbook "spinning"
+                        // vestibular trigger, and heading updates arrive fast
+                        // while turning. With Reduce Motion on, freeze it
+                        // pointing up rather than merely toning down the
+                        // animation — the numeric "bearing N°" text below
+                        // already carries the same information without motion.
+                        .rotationEffect(.degrees(reduceMotion ? 0 : needle))
+                        .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: needle)
                 }
                 VStack(spacing: 6) {
                     Text(Format.distance(distance, units: settings.units))
@@ -43,6 +50,10 @@ struct LocateMemberView: View {
                         Text("Compass unavailable — arrow shows map bearing from north")
                             .font(.caption2)
                             .foregroundStyle(.orange)
+                    } else if reduceMotion {
+                        Text("Arrow doesn't rotate with Reduce Motion on — use the bearing above")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                 }
             } else if !room.sharesPreciseLocation {

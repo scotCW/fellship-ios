@@ -4,6 +4,7 @@ import SwiftUI
 /// (when `room` is nil).
 struct ChatView: View {
     @EnvironmentObject private var engine: RoomEngine
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let threadID: String
     var room: Room?
     var peerName: String?
@@ -69,7 +70,15 @@ struct ChatView: View {
                 .onChange(of: engine.chatRevision) {
                     messages = engine.messages(threadID: threadID)
                     if let last = messages.last {
-                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                        // Still land at the bottom for the new message, but
+                        // without the animated glide — auto-scrolling on
+                        // every incoming message is motion the user didn't
+                        // ask for, so it jumps instantly with Reduce Motion on.
+                        if reduceMotion {
+                            proxy.scrollTo(last.id, anchor: .bottom)
+                        } else {
+                            withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                        }
                     }
                 }
                 .onAppear {

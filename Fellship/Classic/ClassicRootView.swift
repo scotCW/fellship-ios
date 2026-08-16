@@ -224,6 +224,7 @@ struct JoinChannelSheet: View {
 struct ClassicChannelView: View {
     @EnvironmentObject private var classic: ClassicStore
     @EnvironmentObject private var app: AppState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// nil = the public channel.
     var channel: MeshChannel?
     @State private var draft = ""
@@ -275,7 +276,11 @@ struct ClassicChannelView: View {
                         }
                         .onChange(of: messages.count) {
                             if let last = messages.last {
-                                withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                                if reduceMotion {
+                                    proxy.scrollTo(last.id, anchor: .bottom)
+                                } else {
+                                    withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                                }
                             }
                         }
                         .onAppear {

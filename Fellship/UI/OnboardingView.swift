@@ -6,6 +6,7 @@ struct OnboardingView: View {
     @EnvironmentObject private var location: LocationService
     @EnvironmentObject private var notifications: NotificationService
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var page = 0
     @State private var name = ""
@@ -23,6 +24,14 @@ struct OnboardingView: View {
         .background(Color(.systemBackground))
     }
 
+    private func advance(to nextPage: Int) {
+        if reduceMotion {
+            page = nextPage
+        } else {
+            withAnimation { page = nextPage }
+        }
+    }
+
     private var welcome: some View {
         VStack(spacing: 18) {
             Spacer()
@@ -37,7 +46,7 @@ struct OnboardingView: View {
                 .padding(.horizontal, 32)
             Spacer()
             Button {
-                withAnimation { page = 1 }
+                advance(to: 1)
             } label: {
                 Text("Get started").frame(maxWidth: .infinity)
             }
@@ -63,7 +72,7 @@ struct OnboardingView: View {
                 "Mesh coverage is best-effort. Don't rely on Fellship as your only lifeline in the backcountry.")
             Spacer()
             Button {
-                withAnimation { page = 2 }
+                advance(to: 2)
             } label: {
                 Text("Understood").frame(maxWidth: .infinity)
             }
