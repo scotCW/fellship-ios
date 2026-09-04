@@ -1,0 +1,17 @@
+version: 2
+updates:
+  # Xcode-managed Swift Package Manager dependencies (MapLibre Native).
+  # No root Package.swift — Dependabot discovers the Package.resolved under
+  # Fellship.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/ from the
+  # repo root.
+  - package-ecosystem: "swift"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Keep the CodeQL workflow's action versions (actions/checkout,
+  # github/codeql-action) current.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
