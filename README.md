@@ -1,3 +1,18 @@
+> [!WARNING]
+> ## 📦 This project is archived
+> **Fellship is no longer maintained.** The repository is read-only as of **7 October 2026**. No further updates, bug fixes, or security patches are planned, and issues and pull requests are no longer monitored.
+>
+> **What this means for you**
+> - The code is public domain ([Unlicense](LICENSE)), so you're free to fork, modify, and build on it. Attribution is appreciated but not required.
+> - Fellship has no backend or accounts, so nothing on a server will shut down. Everything runs on-device and over the MeshCore LoRa mesh.
+> - It was built against stock MeshCore companion firmware. Future firmware changes may break compatibility, and I won't be tracking them.
+> - Releases (including the unsigned `.ipa`) stay available as-is. Build from source with `Scripts/build-unsigned-ipa.sh`.
+>
+> **Looking for an alternative?** If you want a classic MeshCore companion workflow, check out [MeshCore One](https://github.com/Avi0n/MeshCoreOne) by Avi0n, which inspired Fellship's classic mode.
+>
+> *Thanks to everyone who tried it out.* 🏔️
+
+
 # Fellship
 
 **Rooms for your crew, off the grid.**
